@@ -17,7 +17,7 @@ const path = require("path");
 // KONFIGURACJA
 // ======================================================
 
-const TOKEN = process.env.TOKEN;"MTUzOTQ0MzA3MDAzNzI2NjU3Mg.GI4jLH.9PWaqih7sYe0SCPEQ4NsORf09WFh9mkCA21lAU"
+const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;"1539443070037266572"
 const GUILD_ID = process.env.GUILD_ID;"1506076988564050081"
 
