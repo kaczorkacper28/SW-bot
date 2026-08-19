@@ -18,8 +18,8 @@ const path = require("path");
 // ======================================================
 
 const TOKEN = process.env.TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;"1539443070037266572"
-const GUILD_ID = process.env.GUILD_ID;"1506076988564050081"
+const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
   console.error(
