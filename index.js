@@ -42,7 +42,6 @@ if (!fs.existsSync(DATA_DIR)) {
 const DEFAULT_DATA = {
   settings: {
     logChannelId: null,
-    nextNumber: 1,
   },
   members: {},
 };
@@ -90,6 +89,30 @@ function saveData() {
 }
 
 // ======================================================
+// AUTOMATYCZNA NUMERACJA SW
+// ======================================================
+
+function getNextAvailableNumber() {
+  const usedNumbers = new Set(
+    Object.values(db.members)
+      .map((member) => Number(member.number))
+      .filter(
+        (number) =>
+          Number.isInteger(number) &&
+          number > 0
+      )
+  );
+
+  let number = 1;
+
+  while (usedNumbers.has(number)) {
+    number++;
+  }
+
+  return String(number).padStart(2, "0");
+}
+
+// ======================================================
 // RANGI SŁUŻBY WIĘZIENNEJ
 // ======================================================
 
@@ -110,7 +133,10 @@ function rankIndex(rank) {
 function getNextRank(rank) {
   const index = rankIndex(rank);
 
-  if (index >= 0 && index < RANKS.length - 1) {
+  if (
+    index >= 0 &&
+    index < RANKS.length - 1
+  ) {
     return RANKS[index + 1];
   }
 
@@ -163,7 +189,10 @@ async function sendLog(guild, embed) {
       embeds: [embed],
     });
   } catch (error) {
-    console.error("❌ Nie udało się wysłać logu:", error);
+    console.error(
+      "❌ Nie udało się wysłać logu:",
+      error
+    );
   }
 }
 
@@ -538,9 +567,9 @@ client.on(
           });
         }
 
-        const number = String(
-          db.settings.nextNumber++
-        ).padStart(2, "0");
+        // AUTOMATYCZNIE NAJNIŻSZY WOLNY NUMER
+        const number =
+          getNextAvailableNumber();
 
         db.members[user.id] = {
           userId: user.id,
