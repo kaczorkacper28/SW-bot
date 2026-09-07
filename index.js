@@ -13,24 +13,14 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-// ======================================================
-// KONFIGURACJA
-// ======================================================
-
 const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
 if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error(
-    "❌ Brakuje TOKEN, CLIENT_ID lub GUILD_ID w Environment Variables."
-  );
+  console.error("❌ Brakuje TOKEN, CLIENT_ID lub GUILD_ID w Environment Variables.");
   process.exit(1);
 }
-
-// ======================================================
-// BAZA DANYCH
-// ======================================================
 
 const DATA_DIR = path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "sw-data.json");
@@ -40,44 +30,25 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 const DEFAULT_DATA = {
-  settings: {
-    logChannelId: null,
-  },
+  settings: { logChannelId: null },
   members: {},
 };
 
 function loadData() {
   try {
     if (!fs.existsSync(DATA_FILE)) {
-      fs.writeFileSync(
-        DATA_FILE,
-        JSON.stringify(DEFAULT_DATA, null, 2),
-        "utf8"
-      );
-
+      fs.writeFileSync(DATA_FILE, JSON.stringify(DEFAULT_DATA, null, 2), "utf8");
       return JSON.parse(JSON.stringify(DEFAULT_DATA));
     }
 
-    const data = JSON.parse(
-      fs.readFileSync(DATA_FILE, "utf8")
-    );
-
+    const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
     return {
-      settings: {
-        ...DEFAULT_DATA.settings,
-        ...(data.settings || {}),
-      },
+      settings: { ...DEFAULT_DATA.settings, ...(data.settings || {}) },
       members: data.members || {},
     };
   } catch (error) {
-    console.error(
-      "❌ Błąd odczytu bazy danych:",
-      error
-    );
-
-    return JSON.parse(
-      JSON.stringify(DEFAULT_DATA)
-    );
+    console.error("❌ Błąd odczytu bazy danych:", error);
+    return JSON.parse(JSON.stringify(DEFAULT_DATA));
   }
 }
 
@@ -85,21 +56,14 @@ let db = loadData();
 
 function saveData() {
   try {
-    fs.writeFileSync(
-      DATA_FILE,
-      JSON.stringify(db, null, 2),
-      "utf8"
-    );
+    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), "utf8");
   } catch (error) {
-    console.error(
-      "❌ Błąd zapisu bazy danych:",
-      error
-    );
+    console.error("❌ Błąd zapisu bazy danych:", error);
   }
 }
 
 // ======================================================
-// RANGI SŁUŻBY WIĘZIENNEJ
+// RANGI I KORPUSY SŁUŻBY WIĘZIENNEJ
 // ======================================================
 
 const RANKS = [
@@ -123,1038 +87,398 @@ const RANKS = [
   "Pułkownik",
 ];
 
+const CORPS = {
+  SZEREGOWYCH: "Korpus Szeregowych",
+  PODOFICEROW: "Korpus Podoficerów",
+  CHORAZYCH: "Korpus Chorążych",
+  OFICEROW: "Korpus Oficerów",
+};
+
+function getCorps(rank) {
+  if (["Rekrut", "Szeregowy", "Starszy szeregowy"].includes(rank)) {
+    return CORPS.SZEREGOWYCH;
+  }
+
+  if ([
+    "Kapral",
+    "Starszy kapral",
+    "Plutonowy",
+    "Sierżant",
+    "Starszy sierżant",
+    "Sierżant sztabowy",
+  ].includes(rank)) {
+    return CORPS.PODOFICEROW;
+  }
+
+  if (["Chorąży", "Starszy chorąży", "Chorąży sztabowy"].includes(rank)) {
+    return CORPS.CHORAZYCH;
+  }
+
+  return CORPS.OFICEROW;
+}
+
 function rankIndex(rank) {
   return RANKS.indexOf(rank);
 }
 
 function getNextRank(rank) {
   const index = rankIndex(rank);
-
-  if (
-    index >= 0 &&
-    index < RANKS.length - 1
-  ) {
-    return RANKS[index + 1];
-  }
-
-  return null;
+  return index >= 0 && index < RANKS.length - 1 ? RANKS[index + 1] : null;
 }
 
 function getPreviousRank(rank) {
   const index = rankIndex(rank);
-
-  if (index > 0) {
-    return RANKS[index - 1];
-  }
-
-  return null;
+  return index > 0 ? RANKS[index - 1] : null;
 }
-
-// ======================================================
-// NUMERY SW
-// ======================================================
 
 function formatNumber(number) {
   return String(number).padStart(2, "0");
 }
 
 function isNumberTaken(number) {
-  return Object.values(db.members).some(
-    (member) =>
-      Number(member.number) === Number(number)
-  );
+  return Object.values(db.members).some((member) => Number(member.number) === Number(number));
 }
-
-// ======================================================
-// EMBEDY
-// ======================================================
 
 function createEmbed(title, description) {
   return new EmbedBuilder()
     .setTitle(title)
     .setDescription(description)
     .setTimestamp()
-    .setFooter({
-      text: "Służba Więzienna • System kadrowy",
-    });
+    .setFooter({ text: "Służba Więzienna • System kadrowy" });
 }
-
-// ======================================================
-// LOGI
-// ======================================================
 
 async function sendLog(guild, embed) {
-  if (!db.settings.logChannelId) {
-    return;
-  }
+  if (!db.settings.logChannelId) return;
 
   try {
-    const channel = await guild.channels
-      .fetch(db.settings.logChannelId)
-      .catch(() => null);
-
-    if (
-      !channel ||
-      !channel.isTextBased()
-    ) {
-      return;
-    }
-
-    await channel.send({
-      embeds: [embed],
-    });
+    const channel = await guild.channels.fetch(db.settings.logChannelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+    await channel.send({ embeds: [embed] });
   } catch (error) {
-    console.error(
-      "❌ Nie udało się wysłać logu:",
-      error
-    );
+    console.error("❌ Nie udało się wysłać logu:", error);
   }
 }
 
-// ======================================================
-// UPRAWNIENIA
-// ======================================================
-
 function hasStaffPermission(interaction) {
-  return interaction.memberPermissions?.has(
-    PermissionFlagsBits.ManageGuild
-  );
+  return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 }
 
-// ======================================================
-// KOMENDY SLASH
-// ======================================================
-
 const commands = [
-
-  // ====================================================
-  // USTAW LOGI
-  // ====================================================
-
   new SlashCommandBuilder()
     .setName("sw-ustaw-logi")
-    .setDescription(
-      "Ustaw kanał, na którym będą pojawiać się działania kadrowe."
-    )
-    .addChannelOption((o) =>
-      o
-        .setName("kanal")
-        .setDescription("Kanał logów")
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    ),
-
-  // ====================================================
-  // DODAJ
-  // ====================================================
+    .setDescription("Ustaw kanał, na którym będą pojawiać się działania kadrowe.")
+    .addChannelOption((o) => o.setName("kanal").setDescription("Kanał logów").setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
     .setName("sw-dodaj")
-    .setDescription(
-      "Dodaj funkcjonariusza do ewidencji Służby Więziennej."
-    )
-
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-
-    .addIntegerOption((o) =>
-      o
-        .setName("numer")
-        .setDescription(
-          "Numer SW, np. 1 = SW-01"
-        )
-        .setRequired(true)
-        .setMinValue(1)
-        .setMaxValue(9999)
-    )
-
-    .addStringOption((o) =>
-      o
-        .setName("ranga")
-        .setDescription("Ranga początkowa")
-        .setRequired(false)
-        .addChoices(
-          ...RANKS.map((rank) => ({
-            name: rank,
-            value: rank,
-          }))
-        )
-    ),
-
-  // ====================================================
-  // AWANS
-  // ====================================================
+    .setDescription("Dodaj funkcjonariusza do ewidencji Służby Więziennej.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addIntegerOption((o) => o.setName("numer").setDescription("Numer SW, np. 1 = SW-01").setRequired(true).setMinValue(1).setMaxValue(9999))
+    .addStringOption((o) => o.setName("ranga").setDescription("Ranga początkowa").setRequired(false).addChoices(...RANKS.map((rank) => ({ name: rank, value: rank })))),
 
   new SlashCommandBuilder()
     .setName("sw-awans")
-    .setDescription(
-      "Awansuj funkcjonariusza o jeden stopień."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("powod")
-        .setDescription("Powód awansu")
-        .setRequired(false)
-    ),
-
-  // ====================================================
-  // DEGRADACJA
-  // ====================================================
+    .setDescription("Awansuj funkcjonariusza o jeden stopień.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addStringOption((o) => o.setName("powod").setDescription("Powód awansu").setRequired(false)),
 
   new SlashCommandBuilder()
     .setName("sw-degradacja")
-    .setDescription(
-      "Degraduj funkcjonariusza o jeden stopień."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("powod")
-        .setDescription("Powód degradacji")
-        .setRequired(false)
-    ),
-
-  // ====================================================
-  // WYDALENIE
-  // ====================================================
+    .setDescription("Degraduj funkcjonariusza o jeden stopień.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addStringOption((o) => o.setName("powod").setDescription("Powód degradacji").setRequired(false)),
 
   new SlashCommandBuilder()
     .setName("sw-wydalenie")
-    .setDescription(
-      "Wydal funkcjonariusza ze Służby Więziennej."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("powod")
-        .setDescription("Powód wydalenia")
-        .setRequired(true)
-    ),
-
-  // ====================================================
-  // NAGANA
-  // ====================================================
+    .setDescription("Wydal funkcjonariusza ze Służby Więziennej.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addStringOption((o) => o.setName("powod").setDescription("Powód wydalenia").setRequired(true)),
 
   new SlashCommandBuilder()
     .setName("sw-nagana")
-    .setDescription(
-      "Nadaj funkcjonariuszowi naganę."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("powod")
-        .setDescription("Powód nagany")
-        .setRequired(true)
-    ),
-
-  // ====================================================
-  // PLUS
-  // ====================================================
+    .setDescription("Nadaj funkcjonariuszowi naganę.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addStringOption((o) => o.setName("powod").setDescription("Powód nagany").setRequired(true)),
 
   new SlashCommandBuilder()
     .setName("sw-plus")
-    .setDescription(
-      "Dodaj funkcjonariuszowi punkt dodatni."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("powod")
-        .setDescription("Powód")
-        .setRequired(true)
-    )
-    .addIntegerOption((o) =>
-      o
-        .setName("punkty")
-        .setDescription("Liczba punktów")
-        .setRequired(false)
-        .setMinValue(1)
-        .setMaxValue(100)
-    ),
-
-  // ====================================================
-  // MINUS
-  // ====================================================
+    .setDescription("Dodaj funkcjonariuszowi punkt dodatni.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addStringOption((o) => o.setName("powod").setDescription("Powód").setRequired(true))
+    .addIntegerOption((o) => o.setName("punkty").setDescription("Liczba punktów").setRequired(false).setMinValue(1).setMaxValue(100)),
 
   new SlashCommandBuilder()
     .setName("sw-minus")
-    .setDescription(
-      "Dodaj funkcjonariuszowi punkt ujemny."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .addStringOption((o) =>
-      o
-        .setName("powod")
-        .setDescription("Powód")
-        .setRequired(true)
-    )
-    .addIntegerOption((o) =>
-      o
-        .setName("punkty")
-        .setDescription("Liczba punktów")
-        .setRequired(false)
-        .setMinValue(1)
-        .setMaxValue(100)
-    ),
+    .setDescription("Dodaj funkcjonariuszowi punkt ujemny.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .addStringOption((o) => o.setName("powod").setDescription("Powód").setRequired(true))
+    .addIntegerOption((o) => o.setName("punkty").setDescription("Liczba punktów").setRequired(false).setMinValue(1).setMaxValue(100)),
 
-  // ====================================================
-  // KADRA
-  // ====================================================
-
-  new SlashCommandBuilder()
-    .setName("sw-kadra")
-    .setDescription(
-      "Wyświetl listę funkcjonariuszy Służby Więziennej."
-    ),
-
-  // ====================================================
-  // INFO
-  // ====================================================
+  new SlashCommandBuilder().setName("sw-kadra").setDescription("Wyświetl listę funkcjonariuszy Służby Więziennej."),
 
   new SlashCommandBuilder()
     .setName("sw-info")
-    .setDescription(
-      "Wyświetl kartę funkcjonariusza."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    ),
-
-  // ====================================================
-  // USUŃ
-  // ====================================================
+    .setDescription("Wyświetl kartę funkcjonariusza.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true)),
 
   new SlashCommandBuilder()
     .setName("sw-usun")
-    .setDescription(
-      "Usuń funkcjonariusza z ewidencji."
-    )
-    .addUserOption((o) =>
-      o
-        .setName("osoba")
-        .setDescription("Funkcjonariusz")
-        .setRequired(true)
-    )
-    .setDefaultMemberPermissions(
-      PermissionFlagsBits.ManageGuild
-    ),
-
+    .setDescription("Usuń funkcjonariusza z ewidencji.")
+    .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 ].map((command) => command.toJSON());
 
-// ======================================================
-// KLIENT DISCORD
-// ======================================================
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-  ],
-});
-
-// ======================================================
-// REJESTRACJA KOMEND
-// ======================================================
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 async function registerCommands() {
-  const rest = new REST({
-    version: "10",
-  }).setToken(TOKEN);
-
-  await rest.put(
-    Routes.applicationGuildCommands(
-      CLIENT_ID,
-      GUILD_ID
-    ),
-    {
-      body: commands,
-    }
-  );
-
-  console.log(
-    "✅ Komendy slash zostały zarejestrowane."
-  );
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+  console.log("✅ Komendy slash zostały zarejestrowane.");
 }
 
-// ======================================================
-// BOT GOTOWY
-// ======================================================
-
 client.once("ready", async () => {
-  console.log(
-    `✅ Zalogowano jako ${client.user.tag}`
-  );
-
-  console.log(
-    `🏛️ Serwer ID: ${GUILD_ID}`
-  );
-
+  console.log(`✅ Zalogowano jako ${client.user.tag}`);
+  console.log(`🏛️ Serwer ID: ${GUILD_ID}`);
   try {
     await registerCommands();
   } catch (error) {
-    console.error(
-      "❌ Nie udało się zarejestrować komend:"
-    );
-
+    console.error("❌ Nie udało się zarejestrować komend:");
     console.error(error);
   }
 });
 
-// ======================================================
-// OBSŁUGA KOMEND
-// ======================================================
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
 
-client.on(
-  "interactionCreate",
-  async (interaction) => {
+  const name = interaction.commandName;
 
-    if (!interaction.isChatInputCommand()) {
-      return;
+  try {
+    if (name === "sw-ustaw-logi") {
+      if (!hasStaffPermission(interaction)) {
+        return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", ephemeral: true });
+      }
+
+      const channel = interaction.options.getChannel("kanal");
+      db.settings.logChannelId = channel.id;
+      saveData();
+      return interaction.reply(`✅ Kanał logów ustawiony na ${channel}.`);
     }
 
-    const name = interaction.commandName;
+    if (name === "sw-dodaj") {
+      const user = interaction.options.getUser("osoba");
+      const number = interaction.options.getInteger("numer");
+      const rank = interaction.options.getString("ranga") || "Rekrut";
+      const corps = getCorps(rank);
 
-    try {
-
-      // ==================================================
-      // USTAW LOGI
-      // ==================================================
-
-      if (name === "sw-ustaw-logi") {
-
-        if (!hasStaffPermission(interaction)) {
-          return interaction.reply({
-            content:
-              "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.",
-            ephemeral: true,
-          });
-        }
-
-        const channel =
-          interaction.options.getChannel(
-            "kanal"
-          );
-
-        db.settings.logChannelId =
-          channel.id;
-
-        saveData();
-
-        return interaction.reply(
-          `✅ Kanał logów ustawiony na ${channel}.`
-        );
+      if (!number) {
+        return interaction.reply({ content: "❌ Musisz podać numer SW.", ephemeral: true });
       }
 
-      // ==================================================
-      // DODAJ FUNKCJONARIUSZA
-      // ==================================================
-
-      if (name === "sw-dodaj") {
-
-        const user =
-          interaction.options.getUser(
-            "osoba"
-          );
-
-        const number =
-          interaction.options.getInteger(
-            "numer"
-          );
-
-        const rank =
-          interaction.options.getString(
-            "ranga"
-          ) || "Rekrut";
-
-        // ----------------------------------------------
-        // SPRAWDZENIE NUMERU
-        // ----------------------------------------------
-
-        if (!number) {
-          return interaction.reply({
-            content:
-              "❌ Musisz podać numer SW.",
-            ephemeral: true,
-          });
-        }
-
-        // ----------------------------------------------
-        // SPRAWDZENIE OSOBY
-        // ----------------------------------------------
-
-        if (db.members[user.id]) {
-          return interaction.reply({
-            content:
-              `❌ ${user} jest już w ewidencji jako **SW-${formatNumber(
-                db.members[user.id].number
-              )}**.`,
-            ephemeral: true,
-          });
-        }
-
-        // ----------------------------------------------
-        // SPRAWDZENIE CZY NUMER JEST WOLNY
-        // ----------------------------------------------
-
-        if (isNumberTaken(number)) {
-          return interaction.reply({
-            content:
-              `❌ Numer **SW-${formatNumber(
-                number
-              )}** jest już zajęty.`,
-            ephemeral: true,
-          });
-        }
-
-        // ----------------------------------------------
-        // ZAPIS FUNKCJONARIUSZA
-        // ----------------------------------------------
-
-        const formattedNumber =
-          formatNumber(number);
-
-        db.members[user.id] = {
-          userId: user.id,
-          number: number,
-          rank: rank,
-          plus: 0,
-          minus: 0,
-          reprimands: 0,
-          joinedAt:
-            new Date().toISOString(),
-        };
-
-        saveData();
-
-        // ----------------------------------------------
-        // EMBED
-        // ----------------------------------------------
-
-        const embed = createEmbed(
-          "🟢 PRZYJĘCIE DO SŁUŻBY WIĘZIENNEJ",
-
-          `**Funkcjonariusz:** ${user}
-**Numer:** \`SW-${formattedNumber}\`
-**Ranga:** ${rank}
-**Przyjął:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
+      if (db.members[user.id]) {
+        return interaction.reply({ content: `❌ ${user} jest już w ewidencji jako **SW-${formatNumber(db.members[user.id].number)}**.`, ephemeral: true });
       }
 
-      // ==================================================
-      // POBRANIE OSOBY
-      // ==================================================
-
-      const user =
-        interaction.options.getUser(
-          "osoba"
-        );
-
-      // ==================================================
-      // KOMENDY WYMAGAJĄCE EWIDENCJI
-      // ==================================================
-
-      const commandsWithMember = [
-        "sw-awans",
-        "sw-degradacja",
-        "sw-wydalenie",
-        "sw-nagana",
-        "sw-plus",
-        "sw-minus",
-        "sw-info",
-      ];
-
-      if (
-        commandsWithMember.includes(name) &&
-        (!user || !db.members[user.id])
-      ) {
-        return interaction.reply({
-          content:
-            "❌ Ta osoba nie znajduje się w ewidencji. Użyj `/sw-dodaj`.",
-          ephemeral: true,
-        });
+      if (isNumberTaken(number)) {
+        return interaction.reply({ content: `❌ Numer **SW-${formatNumber(number)}** jest już zajęty.`, ephemeral: true });
       }
 
-      // ==================================================
-      // AWANS
-      // ==================================================
-
-      if (name === "sw-awans") {
-
-        const data =
-          db.members[user.id];
-
-        const oldRank =
-          data.rank;
-
-        const newRank =
-          getNextRank(oldRank);
-
-        if (!newRank) {
-          return interaction.reply({
-            content:
-              "❌ Funkcjonariusz ma już najwyższą rangę.",
-            ephemeral: true,
-          });
-        }
-
-        data.rank = newRank;
-
-        saveData();
-
-        const reason =
-          interaction.options.getString(
-            "powod"
-          ) ||
-          "Brak podanego powodu.";
-
-        const embed = createEmbed(
-          "⬆️ AWANS",
-
-          `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(
-            data.number
-          )}\`
-**Było:** ${oldRank}
-**Jest:** ${newRank}
-**Powód:** ${reason}
-**Wykonał:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // DEGRADACJA
-      // ==================================================
-
-      if (name === "sw-degradacja") {
-
-        const data =
-          db.members[user.id];
-
-        const oldRank =
-          data.rank;
-
-        const newRank =
-          getPreviousRank(oldRank);
-
-        if (!newRank) {
-          return interaction.reply({
-            content:
-              "❌ Funkcjonariusz ma już najniższą rangę.",
-            ephemeral: true,
-          });
-        }
-
-        data.rank = newRank;
-
-        saveData();
-
-        const reason =
-          interaction.options.getString(
-            "powod"
-          ) ||
-          "Brak podanego powodu.";
-
-        const embed = createEmbed(
-          "⬇️ DEGRADACJA",
-
-          `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(
-            data.number
-          )}\`
-**Było:** ${oldRank}
-**Jest:** ${newRank}
-**Powód:** ${reason}
-**Wykonał:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // WYDALENIE
-      // ==================================================
-
-      if (name === "sw-wydalenie") {
-
-        const data =
-          db.members[user.id];
-
-        const reason =
-          interaction.options.getString(
-            "powod"
-          );
-
-        delete db.members[user.id];
-
-        saveData();
-
-        const embed = createEmbed(
-          "🔴 WYDALENIE ZE SŁUŻBY",
-
-          `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(
-            data.number
-          )}\`
-**Ostatnia ranga:** ${data.rank}
-**Powód:** ${reason}
-**Wykonał:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // NAGANA
-      // ==================================================
-
-      if (name === "sw-nagana") {
-
-        const data =
-          db.members[user.id];
-
-        const reason =
-          interaction.options.getString(
-            "powod"
-          );
-
-        data.reprimands += 1;
-
-        saveData();
-
-        const embed = createEmbed(
-          "⚠️ NAGANA",
-
-          `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(
-            data.number
-          )}\`
-**Ranga:** ${data.rank}
-**Nagana nr:** ${data.reprimands}
-**Powód:** ${reason}
-**Nadał:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // PLUS
-      // ==================================================
-
-      if (name === "sw-plus") {
-
-        const data =
-          db.members[user.id];
-
-        const points =
-          interaction.options.getInteger(
-            "punkty"
-          ) || 1;
-
-        const reason =
-          interaction.options.getString(
-            "powod"
-          );
-
-        data.plus += points;
-
-        saveData();
-
-        const embed = createEmbed(
-          "➕ PLUS",
-
-          `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(
-            data.number
-          )}\`
-**Ranga:** ${data.rank}
-**Dodane punkty:** ${points}
-**Łącznie plusów:** ${data.plus}
-**Powód:** ${reason}
-**Nadał:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // MINUS
-      // ==================================================
-
-      if (name === "sw-minus") {
-
-        const data =
-          db.members[user.id];
-
-        const points =
-          interaction.options.getInteger(
-            "punkty"
-          ) || 1;
-
-        const reason =
-          interaction.options.getString(
-            "powod"
-          );
-
-        data.minus += points;
-
-        saveData();
-
-        const embed = createEmbed(
-          "➖ MINUS",
-
-          `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(
-            data.number
-          )}\`
-**Ranga:** ${data.rank}
-**Dodane punkty:** ${points}
-**Łącznie minusów:** ${data.minus}
-**Powód:** ${reason}
-**Nadał:** ${interaction.user}`
-        );
-
-        await sendLog(
-          interaction.guild,
-          embed
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // INFO
-      // ==================================================
-
-      if (name === "sw-info") {
-
-        const data =
-          db.members[user.id];
-
-        const joinedTimestamp =
-          Math.floor(
-            new Date(
-              data.joinedAt
-            ).getTime() / 1000
-          );
-
-        const embed = createEmbed(
-          `📋 KARTA FUNKCJONARIUSZA — SW-${formatNumber(
-            data.number
-          )}`,
-
-          `**Osoba:** ${user}
-**Numer:** \`SW-${formatNumber(
-            data.number
-          )}\`
-**Ranga:** ${data.rank}
-
-**➕ Plusy:** ${data.plus}
-**➖ Minusy:** ${data.minus}
-**⚠️ Nagany:** ${data.reprimands}
-
-**Data przyjęcia:** <t:${joinedTimestamp}:d>`
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // KADRA
-      // ==================================================
-
-      if (name === "sw-kadra") {
-
-        const list =
-          Object.values(
-            db.members
-          ).sort(
-            (a, b) =>
-              Number(a.number) -
-              Number(b.number)
-          );
-
-        if (!list.length) {
-          return interaction.reply(
-            "📋 Ewidencja jest obecnie pusta."
-          );
-        }
-
-        const lines =
-          list.map(
-            (member) =>
-              `**SW-${formatNumber(
-                member.number
-              )}** — <@${member.userId}> — **${member.rank}** | ➕ ${member.plus} | ➖ ${member.minus} | ⚠️ ${member.reprimands}`
-          );
-
-        const embed = createEmbed(
-          "🛡️ KADRA SŁUŻBY WIĘZIENNEJ",
-
-          lines
-            .join("\n")
-            .slice(0, 3900)
-        );
-
-        return interaction.reply({
-          embeds: [embed],
-        });
-      }
-
-      // ==================================================
-      // USUŃ
-      // ==================================================
-
-      if (name === "sw-usun") {
-
-        if (!hasStaffPermission(interaction)) {
-          return interaction.reply({
-            content:
-              "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.",
-            ephemeral: true,
-          });
-        }
-
-        if (!db.members[user.id]) {
-          return interaction.reply({
-            content:
-              "❌ Tej osoby nie ma w ewidencji.",
-            ephemeral: true,
-          });
-        }
-
-        const data =
-          db.members[user.id];
-
-        delete db.members[user.id];
-
-        saveData();
-
-        return interaction.reply(
-          `🗑️ Usunięto ${user} (\`SW-${formatNumber(
-            data.number
-          )}\`) z ewidencji.`
-        );
-      }
-
-    } catch (error) {
-
-      console.error(
-        "❌ Błąd podczas wykonywania komendy:"
+      const formattedNumber = formatNumber(number);
+      db.members[user.id] = {
+        userId: user.id,
+        number,
+        rank,
+        corps,
+        plus: 0,
+        minus: 0,
+        reprimands: 0,
+        joinedAt: new Date().toISOString(),
+      };
+
+      saveData();
+
+      const embed = createEmbed(
+        "🟢 PRZYJĘCIE DO SŁUŻBY WIĘZIENNEJ",
+        `**Funkcjonariusz:** ${user}\n**Numer:** \`SW-${formattedNumber}\`\n**Korpus:** ${corps}\n**Ranga:** ${rank}\n**Przyjął:** ${interaction.user}`
       );
 
-      console.error(error);
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
 
-      if (
-        interaction.replied ||
-        interaction.deferred
-      ) {
-        await interaction
-          .followUp({
-            content:
-              "❌ Wystąpił błąd podczas wykonywania komendy.",
-            ephemeral: true,
-          })
-          .catch(() => {});
-      } else {
-        await interaction
-          .reply({
-            content:
-              "❌ Wystąpił błąd podczas wykonywania komendy.",
-            ephemeral: true,
-          })
-          .catch(() => {});
+    const user = interaction.options.getUser("osoba");
+    const commandsWithMember = ["sw-awans", "sw-degradacja", "sw-wydalenie", "sw-nagana", "sw-plus", "sw-minus", "sw-info"];
+
+    if (commandsWithMember.includes(name) && (!user || !db.members[user.id])) {
+      return interaction.reply({ content: "❌ Ta osoba nie znajduje się w ewidencji. Użyj `/sw-dodaj`.", ephemeral: true });
+    }
+
+    if (name === "sw-awans") {
+      const data = db.members[user.id];
+      const oldRank = data.rank;
+      const newRank = getNextRank(oldRank);
+
+      if (!newRank) {
+        return interaction.reply({ content: "❌ Funkcjonariusz ma już najwyższą rangę.", ephemeral: true });
       }
+
+      data.rank = newRank;
+      data.corps = getCorps(newRank);
+      saveData();
+
+      const reason = interaction.options.getString("powod") || "Brak podanego powodu.";
+      const embed = createEmbed(
+        "⬆️ AWANS",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Było:** ${oldRank} • ${getCorps(oldRank)}\n**Jest:** ${newRank} • ${data.corps}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
+      );
+
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-degradacja") {
+      const data = db.members[user.id];
+      const oldRank = data.rank;
+      const newRank = getPreviousRank(oldRank);
+
+      if (!newRank) {
+        return interaction.reply({ content: "❌ Funkcjonariusz ma już najniższą rangę.", ephemeral: true });
+      }
+
+      data.rank = newRank;
+      data.corps = getCorps(newRank);
+      saveData();
+
+      const reason = interaction.options.getString("powod") || "Brak podanego powodu.";
+      const embed = createEmbed(
+        "⬇️ DEGRADACJA",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Było:** ${oldRank} • ${getCorps(oldRank)}\n**Jest:** ${newRank} • ${data.corps}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
+      );
+
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-wydalenie") {
+      const data = db.members[user.id];
+      const reason = interaction.options.getString("powod");
+      delete db.members[user.id];
+      saveData();
+
+      const embed = createEmbed(
+        "🔴 WYDALENIE ZE SŁUŻBY",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps || getCorps(data.rank)}\n**Ostatnia ranga:** ${data.rank}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
+      );
+
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-nagana") {
+      const data = db.members[user.id];
+      const reason = interaction.options.getString("powod");
+      data.reprimands += 1;
+      data.corps = getCorps(data.rank);
+      saveData();
+
+      const embed = createEmbed(
+        "⚠️ NAGANA",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps}\n**Ranga:** ${data.rank}\n**Nagana nr:** ${data.reprimands}\n**Powód:** ${reason}\n**Nadał:** ${interaction.user}`
+      );
+
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-plus") {
+      const data = db.members[user.id];
+      const points = interaction.options.getInteger("punkty") || 1;
+      const reason = interaction.options.getString("powod");
+      data.plus += points;
+      data.corps = getCorps(data.rank);
+      saveData();
+
+      const embed = createEmbed(
+        "➕ PLUS",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps}\n**Ranga:** ${data.rank}\n**Dodane punkty:** ${points}\n**Łącznie plusów:** ${data.plus}\n**Powód:** ${reason}\n**Nadał:** ${interaction.user}`
+      );
+
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-minus") {
+      const data = db.members[user.id];
+      const points = interaction.options.getInteger("punkty") || 1;
+      const reason = interaction.options.getString("powod");
+      data.minus += points;
+      data.corps = getCorps(data.rank);
+      saveData();
+
+      const embed = createEmbed(
+        "➖ MINUS",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps}\n**Ranga:** ${data.rank}\n**Dodane punkty:** ${points}\n**Łącznie minusów:** ${data.minus}\n**Powód:** ${reason}\n**Nadał:** ${interaction.user}`
+      );
+
+      await sendLog(interaction.guild, embed);
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-info") {
+      const data = db.members[user.id];
+      const corps = getCorps(data.rank);
+      data.corps = corps;
+      saveData();
+
+      const joinedTimestamp = Math.floor(new Date(data.joinedAt).getTime() / 1000);
+      const embed = createEmbed(
+        `📋 KARTA FUNKCJONARIUSZA — SW-${formatNumber(data.number)}`,
+        `**Osoba:** ${user}\n**Numer:** \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${corps}\n**Ranga:** ${data.rank}\n\n**➕ Plusy:** ${data.plus}\n**➖ Minusy:** ${data.minus}\n**⚠️ Nagany:** ${data.reprimands}\n\n**Data przyjęcia:** <t:${joinedTimestamp}:d>`
+      );
+
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-kadra") {
+      const list = Object.values(db.members).sort((a, b) => Number(a.number) - Number(b.number));
+
+      if (!list.length) {
+        return interaction.reply("📋 Ewidencja jest obecnie pusta.");
+      }
+
+      const lines = list.map((member) => {
+        const corps = getCorps(member.rank);
+        return `**SW-${formatNumber(member.number)}** — <@${member.userId}> — **${member.rank}** | **${corps}** | ➕ ${member.plus} | ➖ ${member.minus} | ⚠️ ${member.reprimands}`;
+      });
+
+      const embed = createEmbed("🛡️ KADRA SŁUŻBY WIĘZIENNEJ", lines.join("\n").slice(0, 3900));
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    if (name === "sw-usun") {
+      if (!hasStaffPermission(interaction)) {
+        return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", ephemeral: true });
+      }
+
+      if (!db.members[user.id]) {
+        return interaction.reply({ content: "❌ Tej osoby nie ma w ewidencji.", ephemeral: true });
+      }
+
+      const data = db.members[user.id];
+      delete db.members[user.id];
+      saveData();
+      return interaction.reply(`🗑️ Usunięto ${user} (\`SW-${formatNumber(data.number)}\`) z ewidencji.`);
+    }
+  } catch (error) {
+    console.error("❌ Błąd podczas wykonywania komendy:");
+    console.error(error);
+
+    if (interaction.replied || interaction.deferred) {
+      await interaction.followUp({ content: "❌ Wystąpił błąd podczas wykonywania komendy.", ephemeral: true }).catch(() => {});
+    } else {
+      await interaction.reply({ content: "❌ Wystąpił błąd podczas wykonywania komendy.", ephemeral: true }).catch(() => {});
     }
   }
-);
-
-// ======================================================
-// LOGOWANIE BOTA
-// ======================================================
+});
 
 client.login(TOKEN);
