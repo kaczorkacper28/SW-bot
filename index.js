@@ -85,6 +85,7 @@ const RANKS = [
   "Major",
   "Podpułkownik",
   "Pułkownik",
+  "Generał inspektor",
 ];
 
 const CORPS = {
@@ -93,6 +94,7 @@ const CORPS = {
   CHORAZY: "Korpus Chorąży",
   OFICEROW_MLODSZYCH: "Korpus Oficerów Młodszych",
   OFICEROW_STARSZYCH: "Korpus Oficerów Starszych",
+  GENERALOW: "Korpus Generałów",
 };
 
 function getCorps(rank) {
@@ -119,7 +121,15 @@ function getCorps(rank) {
     return CORPS.OFICEROW_MLODSZYCH;
   }
 
-  return CORPS.OFICEROW_STARSZYCH;
+  if (["Major", "Podpułkownik", "Pułkownik"].includes(rank)) {
+    return CORPS.OFICEROW_STARSZYCH;
+  }
+
+  if (rank === "Generał inspektor") {
+    return CORPS.GENERALOW;
+  }
+
+  return CORPS.GENERALOW;
 }
 
 function rankIndex(rank) {
@@ -367,12 +377,13 @@ client.on("interactionCreate", async (interaction) => {
     if (name === "sw-wydalenie") {
       const data = db.members[user.id];
       const reason = interaction.options.getString("powod");
+
       delete db.members[user.id];
       saveData();
 
       const embed = createEmbed(
-        "🔴 WYDALENIE ZE SŁUŻBY",
-        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps || getCorps(data.rank)}\n**Ostatnia ranga:** ${data.rank}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
+        "🔴 WYDALENIE ZE SŁUŻBY WIĘZIENNEJ",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Ranga:** ${data.rank}\n**Korpus:** ${getCorps(data.rank)}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
       );
 
       await sendLog(interaction.guild, embed);
@@ -383,12 +394,11 @@ client.on("interactionCreate", async (interaction) => {
       const data = db.members[user.id];
       const reason = interaction.options.getString("powod");
       data.reprimands += 1;
-      data.corps = getCorps(data.rank);
       saveData();
 
       const embed = createEmbed(
         "⚠️ NAGANA",
-        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps}\n**Ranga:** ${data.rank}\n**Nagana nr:** ${data.reprimands}\n**Powód:** ${reason}\n**Nadał:** ${interaction.user}`
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Ranga:** ${data.rank}\n**Korpus:** ${getCorps(data.rank)}\n**Liczba nagan:** ${data.reprimands}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
       );
 
       await sendLog(interaction.guild, embed);
@@ -400,12 +410,11 @@ client.on("interactionCreate", async (interaction) => {
       const points = interaction.options.getInteger("punkty") || 1;
       const reason = interaction.options.getString("powod");
       data.plus += points;
-      data.corps = getCorps(data.rank);
       saveData();
 
       const embed = createEmbed(
-        "➕ PLUS",
-        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps}\n**Ranga:** ${data.rank}\n**Dodane punkty:** ${points}\n**Łącznie plusów:** ${data.plus}\n**Powód:** ${reason}\n**Nadał:** ${interaction.user}`
+        "🟢 PUNKT DODATNI",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Ranga:** ${data.rank}\n**Korpus:** ${getCorps(data.rank)}\n**Dodano:** +${points}\n**Suma plusów:** ${data.plus}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
       );
 
       await sendLog(interaction.guild, embed);
@@ -417,12 +426,11 @@ client.on("interactionCreate", async (interaction) => {
       const points = interaction.options.getInteger("punkty") || 1;
       const reason = interaction.options.getString("powod");
       data.minus += points;
-      data.corps = getCorps(data.rank);
       saveData();
 
       const embed = createEmbed(
-        "➖ MINUS",
-        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${data.corps}\n**Ranga:** ${data.rank}\n**Dodane punkty:** ${points}\n**Łącznie minusów:** ${data.minus}\n**Powód:** ${reason}\n**Nadał:** ${interaction.user}`
+        "🔴 PUNKT UJEMNY",
+        `**Funkcjonariusz:** ${user} • \`SW-${formatNumber(data.number)}\`\n**Ranga:** ${data.rank}\n**Korpus:** ${getCorps(data.rank)}\n**Dodano:** -${points}\n**Suma minusów:** ${data.minus}\n**Powód:** ${reason}\n**Wykonał:** ${interaction.user}`
       );
 
       await sendLog(interaction.guild, embed);
@@ -431,32 +439,33 @@ client.on("interactionCreate", async (interaction) => {
 
     if (name === "sw-info") {
       const data = db.members[user.id];
-      const corps = getCorps(data.rank);
-      data.corps = corps;
+      data.corps = getCorps(data.rank);
       saveData();
 
-      const joinedTimestamp = Math.floor(new Date(data.joinedAt).getTime() / 1000);
       const embed = createEmbed(
-        `📋 KARTA FUNKCJONARIUSZA — SW-${formatNumber(data.number)}`,
-        `**Osoba:** ${user}\n**Numer:** \`SW-${formatNumber(data.number)}\`\n**Korpus:** ${corps}\n**Ranga:** ${data.rank}\n\n**➕ Plusy:** ${data.plus}\n**➖ Minusy:** ${data.minus}\n**⚠️ Nagany:** ${data.reprimands}\n\n**Data przyjęcia:** <t:${joinedTimestamp}:d>`
+        "📋 KARTA FUNKCJONARIUSZA",
+        `**Funkcjonariusz:** ${user}\n**Numer:** \`SW-${formatNumber(data.number)}\`\n**Ranga:** ${data.rank}\n**Korpus:** ${data.corps}\n**Plusy:** ${data.plus}\n**Minusy:** ${data.minus}\n**Nagany:** ${data.reprimands}\n**Data przyjęcia:** <t:${Math.floor(new Date(data.joinedAt).getTime() / 1000)}:F>`
       );
 
       return interaction.reply({ embeds: [embed] });
     }
 
     if (name === "sw-kadra") {
-      const list = Object.values(db.members).sort((a, b) => Number(a.number) - Number(b.number));
+      const members = Object.values(db.members);
 
-      if (!list.length) {
+      if (!members.length) {
         return interaction.reply("📋 Ewidencja jest obecnie pusta.");
       }
 
-      const lines = list.map((member) => {
-        const corps = getCorps(member.rank);
-        return `**SW-${formatNumber(member.number)}** — <@${member.userId}> — **${member.rank}** | **${corps}** | ➕ ${member.plus} | ➖ ${member.minus} | ⚠️ ${member.reprimands}`;
+      const sorted = [...members].sort((a, b) => rankIndex(b.rank) - rankIndex(a.rank));
+      const lines = sorted.map((member) => {
+        member.corps = getCorps(member.rank);
+        return `• **SW-${formatNumber(member.number)}** — <@${member.userId}> — **${member.rank}** — ${member.corps}`;
       });
 
-      const embed = createEmbed("🛡️ KADRA SŁUŻBY WIĘZIENNEJ", lines.join("\n").slice(0, 3900));
+      saveData();
+
+      const embed = createEmbed("📋 KADRA SŁUŻBY WIĘZIENNEJ", lines.join("\n"));
       return interaction.reply({ embeds: [embed] });
     }
 
@@ -465,24 +474,22 @@ client.on("interactionCreate", async (interaction) => {
         return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", ephemeral: true });
       }
 
-      if (!db.members[user.id]) {
-        return interaction.reply({ content: "❌ Tej osoby nie ma w ewidencji.", ephemeral: true });
+      const data = db.members[user.id];
+
+      if (!data) {
+        return interaction.reply({ content: "❌ Ta osoba nie znajduje się w ewidencji.", ephemeral: true });
       }
 
-      const data = db.members[user.id];
       delete db.members[user.id];
       saveData();
-      return interaction.reply(`🗑️ Usunięto ${user} (\`SW-${formatNumber(data.number)}\`) z ewidencji.`);
+      return interaction.reply(`🗑️ Usunięto ${user} z ewidencji Służby Więziennej.`);
     }
   } catch (error) {
-    console.error("❌ Błąd podczas wykonywania komendy:");
-    console.error(error);
-
+    console.error("❌ Błąd obsługi komendy:", error);
     if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content: "❌ Wystąpił błąd podczas wykonywania komendy.", ephemeral: true }).catch(() => {});
-    } else {
-      await interaction.reply({ content: "❌ Wystąpił błąd podczas wykonywania komendy.", ephemeral: true }).catch(() => {});
+      return interaction.followUp({ content: "❌ Wystąpił błąd podczas wykonywania operacji.", ephemeral: true });
     }
+    return interaction.reply({ content: "❌ Wystąpił błąd podczas wykonywania operacji.", ephemeral: true });
   }
 });
 
