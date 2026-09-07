@@ -103,13 +103,24 @@ function saveData() {
 // ======================================================
 
 const RANKS = [
-  "Kandydat",
-  "Młodszy Funkcjonariusz",
-  "Funkcjonariusz",
-  "Starszy Funkcjonariusz",
-  "Dowódca Zmiany",
-  "Zastępca Naczelnika",
-  "Naczelnik",
+  "Rekrut",
+  "Szeregowy",
+  "Starszy szeregowy",
+  "Kapral",
+  "Starszy kapral",
+  "Plutonowy",
+  "Sierżant",
+  "Starszy sierżant",
+  "Sierżant sztabowy",
+  "Chorąży",
+  "Starszy chorąży",
+  "Chorąży sztabowy",
+  "Podporucznik",
+  "Porucznik",
+  "Kapitan",
+  "Major",
+  "Podpułkownik",
+  "Pułkownik",
 ];
 
 function rankIndex(rank) {
@@ -593,7 +604,7 @@ client.on(
         const rank =
           interaction.options.getString(
             "ranga"
-          ) || "Kandydat";
+          ) || "Rekrut";
 
         // ----------------------------------------------
         // SPRAWDZENIE NUMERU
