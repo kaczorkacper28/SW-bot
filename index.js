@@ -90,8 +90,9 @@ const RANKS = [
 const CORPS = {
   SZEREGOWYCH: "Korpus Szeregowych",
   PODOFICEROW: "Korpus Podoficerów",
-  CHORAZYCH: "Korpus Chorążych",
-  OFICEROW: "Korpus Oficerów",
+  CHORAZY: "Korpus Chorąży",
+  OFICEROW_MLODSZYCH: "Korpus Oficerów Młodszych",
+  OFICEROW_STARSZYCH: "Korpus Oficerów Starszych",
 };
 
 function getCorps(rank) {
@@ -111,10 +112,14 @@ function getCorps(rank) {
   }
 
   if (["Chorąży", "Starszy chorąży", "Chorąży sztabowy"].includes(rank)) {
-    return CORPS.CHORAZYCH;
+    return CORPS.CHORAZY;
   }
 
-  return CORPS.OFICEROW;
+  if (["Podporucznik", "Porucznik", "Kapitan"].includes(rank)) {
+    return CORPS.OFICEROW_MLODSZYCH;
+  }
+
+  return CORPS.OFICEROW_STARSZYCH;
 }
 
 function rankIndex(rank) {
