@@ -1,30 +1,33 @@
-# 🛡️ SW Central — główny projekt Służby Więziennej
+# Integracja SW — stan na 2026-11-01
 
-To repozytorium jest głównym punktem projektu SW. Główny bot Discord pozostaje w katalogu głównym.
+Główny projekt: [SW-bot](https://github.com/kaczorkacper28/SW-bot).
 
-## Projekty do połączenia
+## Podłączone do jednego bota Discord
 
-| Projekt | Rola |
-|---|---|
-| [SW-bot](https://github.com/kaczorkacper28/SW-bot) | Główny bot i kadry |
-| [SW-Osadzieni](https://github.com/kaczorkacper28/SW-Osadzieni) | Rejestr osadzonych i przepustki |
-| [SW-stopnie](https://github.com/kaczorkacper28/SW-stopnie) | Lista i stopnie funkcjonariuszy |
-| [SW-RAPORT](https://github.com/kaczorkacper28/SW-RAPORT) | Raporty służbowe |
-| [SW-CENTRUM](https://github.com/kaczorkacper28/SW-CENTRUM) | Dokumentacja i centrum systemu |
-| [propozycja-SW](https://github.com/kaczorkacper28/propozycja-SW) | Propozycje |
-| [SW-Wyplaty](https://github.com/kaczorkacper28/SW-Wyplaty) | Wypłaty |
-| [Wezwanie-SW](https://github.com/kaczorkacper28/Wezwanie-SW) | Wezwania |
-| [SW-Set-Bot](https://github.com/kaczorkacper28/SW-Set-Bot) | Dokumenty służbowe |
-| [SW-android](https://github.com/kaczorkacper28/SW-android) | Aplikacja Android |
+| Źródłowe repozytorium | Obecny kod | Status |
+| --- | --- | --- |
+| SW-bot | `index.js` | Kadry — podłączone |
+| SW-Osadzieni | `osadzeni.js` | Osadzeni i przepustki — podłączone |
+| SW-stopnie | `modules/stopnie.js` | Lista stopni — podłączona, nazwy komend `/stopnie-*` |
+| SW-RAPORT | `modules/raport.js` | Raporty — podłączone |
+| Wezwanie-SW | `modules/wezwanie.js` | Wezwania — podłączone |
+| SW-Set-Bot | `modules/dokumenty.js` | Dokumenty — podłączone |
+| propozycja-SW | `modules/propozycje.js` | Propozycje — podłączone |
+| SW-Wyplaty | `modules/wyplaty.js` | Manualna wypłata przez API — podłączona |
 
-## Ważne
+Główna aplikacja `index.js` loguje się do Discorda tylko raz. Komendy dla głównego serwera są rejestrowane razem. Jeśli `SW_GUILD_ID` różni się od `GUILD_ID`, komenda `/sw-wyplata` jest rejestrowana na drugim serwerze.
 
-Rejestr modułów znajduje się w `SW-MODULES.json`. To jest spis integracyjny, a nie jeszcze gotowe podłączenie kodu wszystkich repozytoriów. Przed uruchomieniem jako jednego procesu trzeba przenieść źródła modułów, ujednolicić rejestrację komend i eventów oraz sprawdzić konfigurację i pliki danych.
+## Pozostałe elementy
 
-Nie uruchamiaj osobnych `npm start` dla każdego modułu w tym samym bocie Discord — docelowo jeden klient Discord i jedna rejestracja komend.
+- **SW-CENTRUM:** dokumentacja / projekt organizacyjny. Nie jest modułem wykonywalnym.
+- **SW-android:** oddzielna aplikacja, nie jest jeszcze przeniesiona do tego repozytorium ani uruchamiana przez Node.js.
+- **Wypłaty niedzielne:** aktualny moduł implementuje `/sw-wyplata`, a nie automatyczny cykl płac.
+- **Uruchomienie produkcyjne:** wymaga konfiguracji zmiennych, uprawnień, ID kanałów, testów z prawdziwym Discordem i UnbelievaBoat.
 
-Aplikacja Android pozostaje osobnym projektem w ramach tego samego repozytorium i nie jest ładowana przez Node.js.
+## Dane i bezpieczeństwo
 
-## Bezpieczeństwo
+`data/sw-data.json` (kadry), `data/sw-stopnie.json` (lista stopni), `data/osadzeni.json` (osadzeni) są celowo oddzielne. Istniejących danych nie wolno zastępować pustymi szablonami podczas migracji.
 
-Nie dodawaj tokenów Discord, webhooków ani pliku `.env` do GitHuba.
+Do repozytorium nie dodawaj `.env`, `TOKEN`, `UNB_API_TOKEN` ani adresów webhooków z poufnymi identyfikatorami. W publicznym źródłowym repozytorium SW-Wyplaty odnaleziono `.env`; wszelkie ujawnione tokeny należy unieważnić i wymienić. Samo skasowanie pliku nie usuwa go z historii Git.
+
+Instrukcje ustawień i lista funkcji: [README.md](README.md).
