@@ -17,6 +17,8 @@ const {
 } = require("discord.js");
 
 const { registerOsadzeniModule } = require("./osadzeni");
+const { registerWezwanieModule } = require("./modules/wezwanie");
+const { registerRaportModule } = require("./modules/raport");
 
 const fs = require("fs");
 const path = require("path");
@@ -189,6 +191,8 @@ function hasStaffPermission(interaction) {
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const osadzeniCommands = registerOsadzeniModule(client);
+const wezwanieCommands = registerWezwanieModule(client);
+const raportCommands = registerRaportModule(client);
 
 const commands = [
   new SlashCommandBuilder()
@@ -254,7 +258,7 @@ const commands = [
     .setDescription("Usuń funkcjonariusza z ewidencji.")
     .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-].map((command) => command.toJSON()).concat(osadzeniCommands);
+].map((command) => command.toJSON()).concat(osadzeniCommands, wezwanieCommands, raportCommands);
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
