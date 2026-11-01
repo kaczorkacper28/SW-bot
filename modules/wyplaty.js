@@ -45,6 +45,7 @@ function registerWyplatyModule(client) {
     const endpoint = "https://unbelievaboat.com/api/v1/guilds/" +
       encodeURIComponent(mainGuildId) + "/users/" + encodeURIComponent(target.id);
 
+    let confirmedByApi = false;
     try {
       // PATCH zwiększa saldo o podaną kwotę; nie zastępuje całego salda.
       const response = await fetch(endpoint, {
@@ -60,10 +61,13 @@ function registerWyplatyModule(client) {
           404: "Nie znaleziono konta użytkownika lub serwera ekonomii.",
           429: "Limit zapytań UnbelievaBoat. Spróbuj później."
         };
-        throw new Error(messages[response.status] || "API zwróciło kod " + response.status);
+        const failure = new Error(messages[response.status] || "API zwróciło kod " + response.status);
+        failure.httpStatus = response.status;
+        throw failure;
       }
 
-      const result = await response.json();
+      confirmedByApi = true;
+      const result = await response.json().catch(() => ({}));
       const embed = new EmbedBuilder()
         .setTitle("💰 Wypłata służbowa SW")
         .addFields(
@@ -86,9 +90,10 @@ function registerWyplatyModule(client) {
       }
     } catch (error) {
       console.error("Błąd wypłaty SW:", error.message);
-      const detail = error.name === "TimeoutError"
-        ? "Brak odpowiedzi API. Sprawdź saldo przed ponowną próbą, aby uniknąć podwójnej wypłaty."
-        : error.message;
+      const detail = confirmedByApi
+        ? "API potwierdziło wypłatę, ale potwierdzenie Discord nie powiodło się. Sprawdź saldo przed ponowną próbą."
+        : error.httpStatus ? error.message
+        : "Nie udało się potwierdzić operacji. Sprawdź saldo przed ponowną próbą, aby uniknąć podwójnej wypłaty.";
       await interaction.editReply({ content: "❌ " + detail }).catch(() => {});
     }
   });
