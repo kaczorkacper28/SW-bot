@@ -17,6 +17,8 @@ const {
 const fs = require("fs");
 const path = require("path");
 
+// Rejestr osadzonych korzysta ze wspólnego klienta głównego bota.
+
 const STAFF_ROLE_NAMES = [
     "Generał Inspektor SW ⚖️👑",
     "Generał SW ⚖️⭐",
