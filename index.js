@@ -22,6 +22,7 @@ const { registerRaportModule } = require("./modules/raport");
 const { registerStopnieModule } = require("./modules/stopnie");
 const { registerDokumentyModule } = require("./modules/dokumenty");
 const { registerPropozycjeModule } = require("./modules/propozycje");
+const { registerWyplatyModule } = require("./modules/wyplaty");
 
 const fs = require("fs");
 const path = require("path");
@@ -199,6 +200,7 @@ const raportCommands = registerRaportModule(client);
 const stopnieCommands = registerStopnieModule(client);
 const dokumentyCommands = registerDokumentyModule(client);
 const propozycjeCommands = registerPropozycjeModule(client);
+const wyplatyCommands = registerWyplatyModule(client);
 
 const commands = [
   new SlashCommandBuilder()
@@ -264,11 +266,19 @@ const commands = [
     .setDescription("Usuń funkcjonariusza z ewidencji.")
     .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-].map((command) => command.toJSON()).concat(osadzeniCommands, wezwanieCommands, raportCommands, stopnieCommands, dokumentyCommands, propozycjeCommands);
+].map((command) => command.toJSON()).concat(osadzeniCommands, wezwanieCommands, raportCommands, stopnieCommands, dokumentyCommands, propozycjeCommands, wyplatyCommands);
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
-  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+  const payoutGuildId = process.env.SW_GUILD_ID || GUILD_ID;
+  const mainCommands = payoutGuildId === GUILD_ID
+    ? commands
+    : commands.filter(command => command.name !== "sw-wyplata");
+  await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: mainCommands });
+  if (payoutGuildId !== GUILD_ID) {
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, payoutGuildId), { body: wyplatyCommands });
+    console.log("✅ Komenda wypłat SW zarejestrowana na osobnym serwerze.");
+  }
   console.log("✅ Komendy slash zostały zarejestrowane.");
 }
 
