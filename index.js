@@ -8,7 +8,15 @@ const {
   SlashCommandBuilder,
   PermissionFlagsBits,
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require("discord.js");
+
+const { registerOsadzeniModule } = require("./osadzeni");
 
 const fs = require("fs");
 const path = require("path");
@@ -179,6 +187,9 @@ function hasStaffPermission(interaction) {
   return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 }
 
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const osadzeniCommands = registerOsadzeniModule(client);
+
 const commands = [
   new SlashCommandBuilder()
     .setName("sw-ustaw-logi")
@@ -243,9 +254,7 @@ const commands = [
     .setDescription("Usuń funkcjonariusza z ewidencji.")
     .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-].map((command) => command.toJSON());
-
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+].map((command) => command.toJSON()).concat(osadzeniCommands);
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
