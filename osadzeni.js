@@ -534,7 +534,7 @@ client.on("interactionCreate", async interaction => {
     // MODAL ZMIANY CZASU
     // ==================================================
     if (interaction.isModalSubmit() && interaction.customId.startsWith("kara_modal_")) {
-        if (!hasTimerPermission(interaction)) return interaction.reply({ content: `❌ Tę funkcję może obsługiwać wyłącznie rola **${TIMER_ROLE_NAME}**.`, ephemeral: true });
+        if (!hasTimerPermission(interaction)) return interaction.reply({ content: "❌ Nie masz uprawnień do zmiany czasu kary.", ephemeral: true });
         const [, , action, id] = interaction.customId.split("_");
         const osadzony = getOsadzony(id);
         if (!osadzony) return interaction.reply({ content: "❌ Nie znaleziono osadzonego.", ephemeral: true });
