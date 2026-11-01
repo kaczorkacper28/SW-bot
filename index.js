@@ -19,6 +19,7 @@ const {
 const { registerOsadzeniModule } = require("./osadzeni");
 const { registerWezwanieModule } = require("./modules/wezwanie");
 const { registerRaportModule } = require("./modules/raport");
+const { registerStopnieModule } = require("./modules/stopnie");
 
 const fs = require("fs");
 const path = require("path");
@@ -193,6 +194,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 const osadzeniCommands = registerOsadzeniModule(client);
 const wezwanieCommands = registerWezwanieModule(client);
 const raportCommands = registerRaportModule(client);
+const stopnieCommands = registerStopnieModule(client);
 
 const commands = [
   new SlashCommandBuilder()
@@ -258,7 +260,7 @@ const commands = [
     .setDescription("Usuń funkcjonariusza z ewidencji.")
     .addUserOption((o) => o.setName("osoba").setDescription("Funkcjonariusz").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
-].map((command) => command.toJSON()).concat(osadzeniCommands, wezwanieCommands, raportCommands);
+].map((command) => command.toJSON()).concat(osadzeniCommands, wezwanieCommands, raportCommands, stopnieCommands);
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(TOKEN);
