@@ -79,3 +79,49 @@ Karty osadzonych mają przyciski pauzy, wznowienia oraz dodawania i odejmowania 
 Dostęp do rejestru: `Generał Inspektor SW ⚖️👑`, `Generał SW ⚖️⭐`, `Dowódca zmiany`, `zca. Dowódca zmiany` lub administrator.
 Pauzowanie i wznawianie kary: powyższe role oraz `Pracownik SW`.
 Dodawanie i odejmowanie czasu: wyłącznie dwie role generalskie.
+
+---
+
+## Jeden bot — zintegrowane moduły
+
+Wszystkie poniższe moduły korzystają z `index.js`, jednego `Client` i jednego `TOKEN`:
+
+| Moduł | Plik | Komendy |
+| --- | --- | --- |
+| Kadry | `index.js` | `/sw-dodaj`, `/sw-awans`, `/sw-kadra` i pozostałe |
+| Osadzeni | `osadzeni.js` | `/osadzony-dodaj`, `/osadzeni`, `/przepustka` |
+| Stopnie / lista SW | `modules/stopnie.js` | `/stopnie-dodaj`, `/stopnie-usun`, `/stopnie-lista`, `/stopnie-przenies`, `/stopnie-ustaw-kanal`, `/stopnie-reset`, `/stopnie-tytul` |
+| Raporty | `modules/raport.js` | `/raport-panel`, przycisk „Złóż raport” |
+| Wezwania | `modules/wezwanie.js` | `/wezwanie` |
+| Dokumenty | `modules/dokumenty.js` | `/setup-dokumenty`, formularze i tickety |
+| Propozycje | `modules/propozycje.js` | `/panel-propozycje`, formularz i reakcje |
+| Wypłaty manualne | `modules/wyplaty.js` | `/sw-wyplata` (UnbelievaBoat API) |
+
+Zmiana nazw komend „stopnie” zapobiega konfliktom z kadrami. Dane kadr są zapisywane w `data/sw-data.json`, osadzeni w `data/osadzeni.json`, a lista stopni w `data/sw-stopnie.json`. **Nie nadpisuj istniejących plików danych podczas migracji.** Na hostingu musi istnieć trwała przestrzeń na katalog `data/`, inaczej zapisy mogą zniknąć po restarcie.
+
+### Konfiguracja
+
+Skopiuj `.env.example` do lokalnego pliku `.env`, ale **nie dodawaj go do GitHub**. Ustaw:
+- Podstawowe: `TOKEN`, `CLIENT_ID`, `GUILD_ID`.
+- Raporty: `REPORT_CHANNEL_ID` (ID kanału raportów).
+- Wezwania: `ROLE_ID` i `CALL_CHANNEL_ID` (opcjonalne ograniczenie roli i docelowy kanał).
+- Dokumenty: `STAFF_ROLE_IDS` (ID ról kadry rozdzielone przecinkami).
+- Propozycje: `PROPOSALS_CHANNEL_ID` (opcjonalne).
+- Wypłaty: `MAIN_GUILD_ID` (serwer ekonomii), `UNB_API_TOKEN` (nowy token API), `PAYOUT_ROLE_ID` (rola uprawniona do wypłat), `LOG_CHANNEL_ID` (opcjonalne logi), `SW_GUILD_ID` (opcjonalny osobny serwer SW; domyślnie `GUILD_ID`).
+
+Gdy `SW_GUILD_ID` różni się od `GUILD_ID`, bot rejestruje `/sw-wyplata` na tym dodatkowym serwerze; ta sama aplikacja Discord musi być na nim dodana. Rejestracja komend zastępuje komendy **tej aplikacji** na wskazanym serwerze.
+
+`/sw-wyplata` dodaje podaną kwotę do gotówki użytkownika na `MAIN_GUILD_ID`. Wyłącznie administrator lub rola `PAYOUT_ROLE_ID` może wypłacać. To **wypłata ręczna**, nie automatyczny harmonogram niedzielny. Jeśli API nie odpowie, sprawdź saldo przed powtórzeniem, aby nie wypłacić podwójnie.
+
+### Uruchomienie i sprawdzenie
+
+```bash
+npm install
+npm start
+```
+
+Na jednym procesie uruchamiaj tylko **główne `index.js`**. Nie uruchamiaj plików w `modules/` oddzielnie. Integracja wymaga sprawdzenia na prawdziwym serwerze, konfiguracji uprawnień oraz przetestowania bezpiecznej, małej wypłaty.
+
+### Ważne bezpieczeństwo
+
+W źródłowym repozytorium `SW-Wyplaty` znajdował się publicznie dostępny plik `.env`. Usuń go z repozytorium i **unieważnij / wygeneruj nowe tokeny Discord i UnbelievaBoat**, jeśli były w tym pliku. Plik pozostaje w historii Git, nawet po usunięciu bieżącej wersji. `.gitignore` w tym repozytorium chroni tylko przed przyszłym dodaniem lokalnego `.env`.
