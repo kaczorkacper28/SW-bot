@@ -1,4 +1,4 @@
-# Integracja SW — stan na 2026-11-01
+# Integracja SW — stan na 2026-11-05
 
 Główny projekt: [SW-bot](https://github.com/kaczorkacper28/SW-bot).
 
@@ -16,6 +16,19 @@ Główny projekt: [SW-bot](https://github.com/kaczorkacper28/SW-bot).
 | SW-Wyplaty | `modules/wyplaty.js` | Manualna wypłata przez API — podłączona |
 
 Główna aplikacja `index.js` loguje się do Discorda tylko raz. Komendy dla głównego serwera są rejestrowane razem. Jeśli `SW_GUILD_ID` różni się od `GUILD_ID`, komenda `/sw-wyplata` jest rejestrowana na drugim serwerze.
+
+## Panel administracyjny
+
+Osobny serwer `panel/server.js` i interfejs `panel/public/` współpracują z jednym
+procesem bota przez prywatne API. Kadry, osadzeni i lista stopni korzystają
+z tych samych obiektów i plików co komendy Discord. Raporty, wezwania, dokumenty,
+propozycje i wypłaty mają trwałą ewidencję i dziennik. Jawna publikacja
+raportów, wezwań i propozycji działa przez połączonego bota. Zapis ewidencji
+wypłat nie wykonuje przelewu.
+
+Uruchomienie lokalne: `npm run panel:admin -- --username admin`, potem
+`npm run dev:offline`. Uruchomienie z Discordem: `npm run dev`.
+Instrukcja konfiguracji i ograniczenia: [PANEL.md](PANEL.md).
 
 ## Pozostałe elementy
 

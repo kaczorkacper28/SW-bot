@@ -3,6 +3,9 @@ const {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder,
   TextInputBuilder, TextInputStyle
 } = require("discord.js");
+const { recordDiscord: record } = require("../services/management");
+
+const VOTE_EMOJIS = ["🟢", "🟡", "🔴"];
 
 const commands = [
   new SlashCommandBuilder().setName("panel-propozycje")
@@ -67,12 +70,41 @@ function registerPropozycjeModule(client) {
           .setTimestamp()],
         allowedMentions:{parse:[]}
       });
-      for (const emoji of ["🟢","🟡","🔴"]) await message.react(emoji);
+      record("proposals", {
+        title: "💡 Nowa propozycja",
+        author: interaction.user.toString(),
+        authorId: interaction.user.id,
+        content,
+        messageId: message.id,
+        discordMessageId: message.id,
+        channelId: channel.id,
+        status: "nowy"
+      });
+      for (const emoji of VOTE_EMOJIS) await message.react(emoji);
       return interaction.reply({content:"✅ Propozycja została dodana.", ephemeral:true});
     } catch(error) {
       console.error("Błąd modułu propozycji:", error);
       if (!interaction.replied && !interaction.deferred)
         await interaction.reply({content:"❌ Błąd wysyłania propozycji. Sprawdź uprawnienia i konfigurację kanału.", ephemeral:true}).catch(() => {});
+    }
+  });
+  client.on("messageReactionAdd", async (reaction, user) => {
+    if (user.bot) return;
+    try {
+      if (reaction.partial) await reaction.fetch();
+      if (reaction.message.partial) await reaction.message.fetch();
+      const message = reaction.message;
+      if (!message.guild || message.author?.id !== client.user?.id) return;
+      if (!message.embeds.some(embed => embed.title === "💡 Nowa propozycja")) return;
+      if (!VOTE_EMOJIS.includes(reaction.emoji.name)) return;
+
+      for (const emoji of VOTE_EMOJIS) {
+        if (emoji === reaction.emoji.name) continue;
+        const previous = message.reactions.cache.find(item => item.emoji.name === emoji);
+        if (previous) await previous.users.remove(user.id);
+      }
+    } catch (error) {
+      console.error("Błąd obsługi głosu propozycji:", error);
     }
   });
   return commands;

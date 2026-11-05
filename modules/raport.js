@@ -1,3 +1,4 @@
+const management = require("../services/management");
 const {
     PermissionFlagsBits,
     EmbedBuilder,
@@ -315,7 +316,7 @@ client.on("interactionCreate", async interaction => {
 
         try {
 
-            await reportChannel.send({
+            const sentMessage = await reportChannel.send({
                 content:
                     `📋 **Nowy raport służbowy** • ${interaction.user}`,
 
@@ -323,6 +324,9 @@ client.on("interactionCreate", async interaction => {
                     reportEmbed
                 ]
             });
+            management.recordDiscord("reports", { authorId: interaction.user.id, author: interaction.user.toString(), title: rodzaj,
+                date: dataSluzby, hours: godziny, place: miejsce, content: przebieg,
+                channelId: reportChannel.id, discordMessageId: sentMessage.id, status: "nowy" });
 
         } catch (error) {
 

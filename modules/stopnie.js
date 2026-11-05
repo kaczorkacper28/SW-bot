@@ -1,3 +1,6 @@
+const management = require("../services/management");
+const validate = require("../services/domain-validation");
+const storage = require("../services/storage");
 const fs = require("fs");
 const path = require("path");
 const {
@@ -7,10 +10,14 @@ const {
   Colors
 } = require("discord.js");
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
 const DATA_FILE = path.join(DATA_DIR, "sw-stopnie.json");
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const LEGACY_DATA_FILE = path.join(__dirname, "data", "sw-stopnie.json");
+if (!process.env.SW_DATA_DIR && !fs.existsSync(DATA_FILE) && fs.existsSync(LEGACY_DATA_FILE)) {
+  fs.copyFileSync(LEGACY_DATA_FILE, DATA_FILE, fs.constants.COPYFILE_EXCL);
+}
 
 const defaultData = {
   channelId: null,
@@ -25,33 +32,11 @@ const defaultData = {
 };
 
 function loadData() {
-  if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(defaultData, null, 2));
-    return structuredClone(defaultData);
-  }
-
-  try {
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    return {
-      ...structuredClone(defaultData),
-      ...data,
-      sections: {
-        ...structuredClone(defaultData.sections),
-        ...(data.sections || {})
-      }
-    };
-  } catch {
-    console.error("Nie można odczytać data/sw-data.json. Tworzę nowy plik.");
-    fs.writeFileSync(DATA_FILE, JSON.stringify(defaultData, null, 2));
-    return structuredClone(defaultData);
-  }
+  const data = storage.readJson(DATA_FILE, defaultData, item => item.sections && typeof item.sections === "object" && ["szefostwo", "pracownicy", "rekruci"].every(section => Array.isArray(item.sections[section])));
+  return { ...structuredClone(defaultData), ...data, sections: { ...structuredClone(defaultData.sections), ...data.sections } };
 }
-
 let data = loadData();
-
-function saveData() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+function saveData() { storage.writeJson(DATA_FILE, data); }
 
 const SECTION_NAMES = {
   szefostwo: "👑 SZEFOSTWO",
@@ -239,6 +224,38 @@ const commands = [
 ].map(command => command.toJSON());
 
 function registerStopnieModule(client) {
+  function findMember(id) {
+    for (const section of Object.keys(SECTION_NAMES)) {
+      const member = data.sections[section].find(item => item.userId === id);
+      if (member) return { ...member, section, id: member.userId };
+    }
+  }
+  function persistList() { saveData(); if (client.isReady()) updateMessage(client).catch(console.error); }
+  function validateEntry(input) {
+    const userId = validate.snowflake(input.userId || input.id);
+    const section = input.section;
+    if (!Object.hasOwn(SECTION_NAMES, section)) validate.fail("Nieprawidłowy dział listy SW.");
+    const number = validate.integer(input.number, "numer", 1, 9999);
+    if (data.sections[section].some(item => item.userId !== userId && item.number === number)) validate.fail("Numer w tym dziale jest zajęty.", 409);
+    return { userId, section, number };
+  }
+  management.registerResource("ranks", {
+    list: () => Object.keys(SECTION_NAMES).flatMap(section => data.sections[section].map(item => ({ ...item, section, id: item.userId }))),
+    create(input) {
+      const item = validateEntry(input);
+      if (findMember(item.userId)) validate.fail("Osoba jest już na liście stopni.", 409);
+      data.sections[item.section].push({ userId: item.userId, number: item.number }); persistList();
+      return { ...item, id: item.userId };
+    },
+    update(id, input) {
+      const previous = validate.present(findMember(id));
+      if ((input.userId && input.userId !== id) || (input.id && input.id !== id)) validate.fail("Nie można zmienić Discord ID.");
+      const item = validateEntry({ ...previous, ...input, userId: id });
+      data.sections[previous.section] = data.sections[previous.section].filter(member => member.userId !== id);
+      data.sections[item.section].push({ userId: id, number: item.number }); persistList(); return { ...item, id };
+    },
+    remove(id) { const item = validate.present(findMember(id)); data.sections[item.section] = data.sections[item.section].filter(member => member.userId !== id); persistList(); return item; }
+  });
   client.once('ready', () => { updateMessage(client).catch(console.error); });
   const stopnieNames = new Set(commands.map(command => command.name));
 
@@ -280,22 +297,14 @@ client.on("interactionCreate", async interaction => {
       const section = interaction.options.getString("dzial");
       const customNumber = interaction.options.getInteger("numer");
 
-      // Usuń osobę z poprzedniego działu, aby nie pojawiła się dwa razy.
+      const number = customNumber || nextNumber(section);
+      const duplicateNumber = data.sections[section].some(m => m.userId !== user.id && m.number === number);
+      if (duplicateNumber) {
+        return interaction.reply({ content: `❌ Numer ${formatNumber(section, number)} jest już zajęty.`, ephemeral: true });
+      }
+      // Validate the destination before removing the previous assignment.
       for (const key of Object.keys(data.sections)) {
         data.sections[key] = data.sections[key].filter(m => m.userId !== user.id);
-      }
-
-      const number = customNumber || nextNumber(section);
-
-      const duplicateNumber = data.sections[section].some(
-        m => m.number === number
-      );
-
-      if (duplicateNumber) {
-        return interaction.reply({
-          content: `❌ Numer ${formatNumber(section, number)} jest już zajęty.`,
-          ephemeral: true
-        });
       }
 
       data.sections[section].push({

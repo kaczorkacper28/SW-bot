@@ -1,3 +1,4 @@
+const management = require("../services/management");
 const {
   EmbedBuilder
 } = require("discord.js");
@@ -87,11 +88,14 @@ client.on('interactionCreate', async interaction => {
       });
     }
 
-    await targetChannel.send({
+    const sentMessage = await targetChannel.send({
       content: `📢 ${member}`,
       embeds: [embed],
       allowedMentions: { users: [member.id] }
     });
+    management.recordDiscord("calls", { userId: member.id, name: robloxUsername, robloxId,
+      content: reason, reason, title: "Wezwanie funkcjonariusza", target: member.toString(), deadline: time, authorId: issuer.id,
+      channelId: targetChannel.id, discordMessageId: sentMessage.id, status: "nowy" });
 
     await interaction.reply({
       content: "✅ Wezwanie zostało wysłane.",

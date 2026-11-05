@@ -1,3 +1,5 @@
+const management = require("../services/management");
+const { fetchExternal } = require("../services/network");
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require("discord.js");
 
 const commands = [
@@ -48,7 +50,7 @@ function registerWyplatyModule(client) {
     let confirmedByApi = false;
     try {
       // PATCH zwiększa saldo o podaną kwotę; nie zastępuje całego salda.
-      const response = await fetch(endpoint, {
+      const response = await fetchExternal(endpoint, {
         method: "PATCH",
         headers: { Authorization: apiToken, "Content-Type": "application/json" },
         body: JSON.stringify({ cash: amount, reason: reason + " | SW: " + interaction.user.id }),
@@ -68,6 +70,8 @@ function registerWyplatyModule(client) {
 
       confirmedByApi = true;
       const result = await response.json().catch(() => ({}));
+      management.recordDiscord("payouts", { userId: target.id, amount, content: reason,
+        authorId: interaction.user.id, recipient: target.toString(), reason, status: "zatwierdzony", paid: true, total: result.total });
       const embed = new EmbedBuilder()
         .setTitle("💰 Wypłata służbowa SW")
         .addFields(

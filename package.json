@@ -1,16 +1,24 @@
 {
   "name": "sw-discord-bot",
   "version": "1.0.0",
-  "description": "Bot Discord dla Służby Więziennej — ewidencja, awanse, degradacje, wydalenia, nagany, plusy i minusy.",
+  "description": "Zintegrowany bot Służby Więziennej i osobny panel administracyjny",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "start:offline": "OFFLINE=1 node index.js",
+    "panel": "node panel/server.js",
+    "panel:admin": "node panel/setup-admin.js",
+    "test": "node --test test/*.test.js",
+    "dev": "node scripts/start-all.js",
+    "dev:offline": "node scripts/start-all.js --offline"
   },
   "engines": {
     "node": "22.x"
   },
   "dependencies": {
     "discord.js": "^14.22.1",
-    "dotenv": "^17.2.1"
+    "dotenv": "^17.2.1",
+    "global-agent": "^3.0.0",
+    "undici": "^6.29.1"
   }
 }

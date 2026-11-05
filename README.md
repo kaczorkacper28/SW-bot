@@ -1,3 +1,11 @@
+# Zintegrowany bot i osobny panel SW
+
+Jeden bot Discord z modułami SW oraz osobny ciemny panel administracyjny.
+Instrukcja panelu, uruchamiania i zakres operacji: **[PANEL.md](PANEL.md)**.
+
+Szybki start na Node.js 22: `npm ci`, `npm run panel:admin -- --username admin`,
+`npm run dev:offline`. Z tokenem Discord użyj `npm run dev`.
+
 # 🛡️ Służba Więzienna — Discord Bot
 
 Gotowy bot do prowadzenia ewidencji funkcjonariuszy Służby Więziennej.

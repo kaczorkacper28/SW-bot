@@ -14,6 +14,9 @@ const {
     SlashCommandBuilder
 } = require("discord.js");
 
+const management = require("./services/management");
+const validate = require("./services/domain-validation");
+const storage = require("./services/storage");
 const fs = require("fs");
 const path = require("path");
 
@@ -40,34 +43,69 @@ const CHANNEL_LOGI = "📜・logi-osadzeni";
 const MINUTES_PER_MONTH = 10;
 const MINUTES_PER_YEAR = 60;
 const TIMER_REFRESH_MS = 15000;
+let refreshTimer;
 
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.SW_DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "osadzeni.json");
 
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ nextId: 1, osadzeni: [], przepustki: [] }, null, 2));
-}
-
 function loadDatabase() {
-    try {
-        const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-        if (!data.osadzeni) data.osadzeni = [];
-        if (!data.przepustki) data.przepustki = [];
-        if (!data.nextId) data.nextId = 1;
-        return data;
-    } catch {
-        return { nextId: 1, osadzeni: [], przepustki: [] };
-    }
+    return storage.readJson(DATA_FILE, { nextId: 1, osadzeni: [], przepustki: [] }, data =>
+        Array.isArray(data.osadzeni) && Array.isArray(data.przepustki) && Number.isSafeInteger(data.nextId) && data.nextId > 0);
 }
-
 const db = loadDatabase();
-
-function saveDatabase() {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
-}
+function saveDatabase() { storage.writeJson(DATA_FILE, db); }
 
 function registerOsadzeniModule(client) {
+management.registerResource("prisoners", {
+    list() { let changed = false; for (const item of db.osadzeni) if (ensureTimer(item)) changed = true; if (changed) saveDatabase(); return db.osadzeni.map(item => ({ ...item })); },
+    create(input) {
+        const item = validatePrisoner(input);
+        item.id = createOsadzonyId(); item.dodanyPrzez = "panel"; item.utworzono = new Date().toISOString();
+        db.osadzeni.push(item); saveDatabase(); return { ...item };
+    },
+    update(id, input) {
+        const previous = validate.present(getOsadzony(id));
+        if (input.id && input.id !== previous.id) validate.fail("Nie można zmienić ID osadzonego.");
+        const item = validatePrisoner(input, previous);
+        Object.assign(previous, item); saveDatabase();
+        if (client.isReady()) refreshOsadzonyMessage(previous).catch(console.error);
+        return { ...previous };
+    },
+    remove(id) {
+        const previous = validate.present(getOsadzony(id));
+        db.osadzeni = db.osadzeni.filter(item => item !== previous);
+        db.przepustki = db.przepustki.filter(item => item.osadzonyId !== previous.id);
+        saveDatabase(); return { ...previous };
+    }
+});
+function validatePrisoner(input, previous) {
+    const item = { ...(previous || {}), ...input };
+    item.imie = validate.text(input.imie ?? input.name ?? previous?.imie, "imię i nazwisko", 150);
+    item.paragraf = validate.text(input.paragraf ?? input.reason ?? previous?.paragraf, "paragraf", 500);
+    item.wyrok = validate.text(item.wyrok || "Brak opisu", "wyrok", 500);
+    item.cela = validate.text(item.cela, "cela", 50);
+    item.uwagi = validate.text(item.uwagi || "Brak", "uwagi", 2000);
+    for (const key of ["poczatek", "koniec"]) {
+        item[key] = validate.text(item[key], key, 5);
+        if (!parseTime(item[key])) validate.fail("Godziny kary muszą mieć format HH:MM.");
+    }
+    const duration = calculateDurationBetween(item.poczatek, item.koniec);
+    if (!duration) validate.fail("Początek i koniec kary muszą być różne.");
+    if (input.paused !== undefined && typeof input.paused !== "boolean") validate.fail("Nieprawidłowa pauza kary.");
+    const resetTime = !previous || item.poczatek !== previous.poczatek || item.koniec !== previous.koniec;
+    if (previous) { const snapshot = { ...previous }; ensureTimer(snapshot); item.remainingSeconds = snapshot.remainingSeconds; }
+    if (resetTime) item.remainingSeconds = duration * 60;
+    if (input.remainingSeconds !== undefined) item.remainingSeconds = validate.integer(input.remainingSeconds, "pozostały czas", 0, 31536000);
+    item.paused = input.paused ?? previous?.paused ?? false;
+    item.timerStartedAt = new Date().toISOString();
+    item.czasKaryMinuty = duration; item.czasZWyrokuMinuty = calculateSentenceMinutes(item.wyrok);
+    item.przepustka = previous?.przepustka || false;
+    // Only persist supported fields; never accept caller-owned Discord message identifiers.
+    return { id: previous?.id, imie:item.imie, paragraf:item.paragraf, wyrok:item.wyrok, cela:item.cela,
+      uwagi:item.uwagi, poczatek:item.poczatek, koniec:item.koniec, remainingSeconds:item.remainingSeconds,
+      paused:item.paused,timerStartedAt:item.timerStartedAt,czasKaryMinuty:item.czasKaryMinuty,
+      czasZWyrokuMinuty:item.czasZWyrokuMinuty,przepustka:item.przepustka };
+}
 
 function hasStaffRole(member) {
     if (!member?.roles) return false;
@@ -304,7 +342,7 @@ const commands = [
 
 client.once("ready", () => {
     // Automatyczne odświeżanie kart osadzonych co 15 sekund.
-    setInterval(async () => {
+    refreshTimer = setInterval(async () => {
         let changed = false;
         for (const osadzony of db.osadzeni) {
             if (ensureTimer(osadzony)) changed = true;
@@ -312,6 +350,7 @@ client.once("ready", () => {
         }
         if (changed) saveDatabase();
     }, TIMER_REFRESH_MS);
+    refreshTimer.unref();
 });
 
 client.on("interactionCreate", async interaction => {
@@ -416,17 +455,9 @@ client.on("interactionCreate", async interaction => {
         const poczatek = interaction.options.getString("poczatek");
         const koniec = interaction.options.getString("koniec");
         const uwagi = interaction.options.getString("uwagi");
-        if (cela) osadzony.cela = cela;
-        if (paragraf) osadzony.paragraf = paragraf;
-        if (wyrok) { osadzony.wyrok = wyrok; osadzony.czasZWyrokuMinuty = calculateSentenceMinutes(wyrok); }
-        if (uwagi) osadzony.uwagi = uwagi;
-        if (poczatek) { if (!parseTime(poczatek)) return interaction.reply({ content: "❌ Początek musi być `HH:MM`.", ephemeral: true }); osadzony.poczatek = poczatek; }
-        if (koniec) { if (!parseTime(koniec)) return interaction.reply({ content: "❌ Koniec musi być `HH:MM`.", ephemeral: true }); osadzony.koniec = koniec; }
-        if (poczatek || koniec) {
-            const duration = calculateDurationBetween(osadzony.poczatek, osadzony.koniec);
-            if (duration === null || duration <= 0) return interaction.reply({ content: "❌ Nieprawidłowy zakres czasu.", ephemeral: true });
-            getRemainingSeconds(osadzony, true);
-        }
+        const changes = Object.fromEntries(Object.entries({ cela, paragraf, wyrok, poczatek, koniec, uwagi }).filter(([, value]) => value !== null && value !== undefined));
+        try { Object.assign(osadzony, validatePrisoner(changes, osadzony)); }
+        catch (error) { return interaction.reply({ content: "❌ " + error.message, ephemeral: true }); }
         saveDatabase();
         await interaction.reply({ content: `✅ Zaktualizowano dane osadzonego **${osadzony.imie} (${osadzony.id})**.` });
         await refreshOsadzonyMessage(osadzony);
@@ -485,10 +516,10 @@ client.on("interactionCreate", async interaction => {
     // STEROWANIE KARĄ: PAUZA / KONTYNUUJ / ZMIANA CZASU
     // ==================================================
     if (interaction.isButton() && interaction.customId.startsWith("kara_")) {
-        if (!hasTimerPermission(interaction)) {
+        const [, action, id] = interaction.customId.split("_");
+        if (!hasTimerPermission(interaction, action)) {
             return interaction.reply({ content: `❌ Nie masz uprawnień do sterowania czasem kary.`, ephemeral: true });
         }
-        const [, action, id] = interaction.customId.split("_");
         const osadzony = getOsadzony(id);
         if (!osadzony) return interaction.reply({ content: "❌ Nie znaleziono osadzonego.", ephemeral: true });
         const seconds = getRemainingSeconds(osadzony, true);
@@ -534,8 +565,9 @@ client.on("interactionCreate", async interaction => {
     // MODAL ZMIANY CZASU
     // ==================================================
     if (interaction.isModalSubmit() && interaction.customId.startsWith("kara_modal_")) {
-        if (!hasTimerPermission(interaction)) return interaction.reply({ content: "❌ Nie masz uprawnień do zmiany czasu kary.", ephemeral: true });
         const [, , action, id] = interaction.customId.split("_");
+        if (!["add", "remove"].includes(action)) return;
+        if (!hasTimerPermission(interaction, action)) return interaction.reply({ content: "❌ Nie masz uprawnień do zmiany czasu kary.", ephemeral: true });
         const osadzony = getOsadzony(id);
         if (!osadzony) return interaction.reply({ content: "❌ Nie znaleziono osadzonego.", ephemeral: true });
         const amount = Number.parseInt(interaction.fields.getTextInputValue("minutes"), 10);
@@ -605,4 +637,4 @@ client.on("interactionCreate", async interaction => {
 return commands;
 }
 
-module.exports = { registerOsadzeniModule };
+module.exports = { registerOsadzeniModule, stopTimers: () => { clearInterval(refreshTimer); refreshTimer = undefined; } };

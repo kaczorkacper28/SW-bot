@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0c1421">
+  <title>SW Centrum — panel służbowy</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div id="login-screen" class="login-screen">
+    <section class="login-brand" aria-label="Służba Więzienna">
+      <div class="seal seal-large"><span>SW</span><small>SŁUŻBA WIĘZIENNA</small></div>
+      <p class="eyebrow">CENTRALNY SYSTEM SŁUŻBOWY</p>
+      <h1>Jedna służba.<br>Wspólne centrum.</h1>
+      <p>Kadra, ewidencja i działania jednostki<br>w jednym miejscu.</p>
+      <div class="login-caption"><span class="status-dot"></span> SW CENTRUM <span>•</span> PANEL ADMINISTRACYJNY</div>
+    </section>
+    <main class="login-form-wrap">
+      <form id="login-form" class="login-form">
+        <span class="overline">DOSTĘP SŁUŻBOWY</span>
+        <h2>Zaloguj się do centrum</h2>
+        <p>Użyj konta administratora swojej jednostki.</p>
+        <label for="username">Nazwa użytkownika</label>
+        <input id="username" name="username" autocomplete="username" required maxlength="64" placeholder="Nazwa administratora">
+        <label for="password">Hasło</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Wprowadź hasło">
+        <p id="login-error" class="form-error" role="alert"></p>
+        <button class="button primary login-submit" type="submit">Zaloguj się <span aria-hidden="true">→</span></button>
+        <div class="login-note"><span aria-hidden="true">⌁</span> Dostęp wyłącznie dla uprawnionej kadry.<br>Operacje w panelu są rejestrowane.</div>
+      </form>
+    </main>
+  </div>
+
+  <div id="app" class="app hidden">
+    <aside id="sidebar" class="sidebar">
+      <a class="brand" href="#overview" aria-label="SW Centrum — pulpit"><div class="seal"><span>SW</span></div><div><strong>SW CENTRUM</strong><small>PANEL SŁUŻBOWY</small></div></a>
+      <div class="unit-card"><span class="unit-icon" aria-hidden="true">▥</span><div><strong>Służba Więzienna</strong><small>Centralna administracja</small></div><span class="tiny-dot"></span></div>
+      <p class="nav-heading">CENTRUM DOWODZENIA</p>
+      <nav id="navigation" aria-label="Nawigacja główna"></nav>
+      <div class="sidebar-footer"><span class="status-dot" id="sidebar-status-dot"></span><div><strong id="sidebar-status">Sprawdzanie systemu</strong><small>Jeden bot · wspólna ewidencja</small></div></div>
+      <div class="sidebar-user"><div class="avatar">AD</div><div><strong id="admin-name">Administrator</strong><small>Administrator systemu</small></div><button id="logout" class="icon-button" title="Wyloguj" aria-label="Wyloguj"></button></div>
+    </aside>
+    <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
+    <div class="main-wrap">
+      <header class="topbar">
+        <button id="menu-toggle" class="icon-button mobile-only" aria-label="Otwórz menu" aria-expanded="false"></button>
+        <div class="breadcrumb">SW Centrum <span>/</span> <strong id="breadcrumb-view">Pulpit</strong></div>
+        <div class="topbar-right"><div class="topbar-date" id="topbar-date"></div><div id="connection-badge" class="connection-badge"><span class="status-dot"></span><span>Łączenie</span></div><button id="refresh" class="icon-button" aria-label="Odśwież dane" title="Odśwież dane"></button></div>
+      </header>
+      <main id="main" class="main" tabindex="-1"></main>
+      <footer class="main-footer"><span>SW CENTRUM <span class="footer-divider">/</span> Centralny system Służby Więziennej</span><span id="last-updated">Oczekiwanie na dane</span></footer>
+    </div>
+  </div>
+  <dialog id="record-dialog" class="record-dialog"><form id="record-form"><div class="dialog-header"><div><span class="overline">EWIDENCJA SŁUŻBOWA</span><h2 id="dialog-title"></h2></div><button id="dialog-close" class="icon-button" type="button" aria-label="Zamknij formularz">×</button></div><div id="dialog-fields" class="dialog-fields"></div><p id="record-error" class="form-error" role="alert"></p><div class="dialog-footer"><button id="dialog-cancel" class="button secondary" type="button">Anuluj</button><button id="record-submit" class="button primary" type="submit">Zapisz wpis</button></div></form></dialog>
+  <dialog id="confirm-dialog" class="confirm-dialog"><h2>Usunąć ten wpis?</h2><p id="confirm-description">Wpis zostanie trwale usunięty z ewidencji. Operacja zostanie zapisana w dzienniku.</p><div class="dialog-footer"><button id="confirm-cancel" class="button secondary">Anuluj</button><button id="confirm-delete" class="button danger">Usuń wpis</button></div></dialog>
+  <dialog id="publish-dialog" class="confirm-dialog"><h2>Wysłać wpis na Discord?</h2><p id="publish-description"></p><p>Bot wyśle wiadomość na kanał skonfigurowany dla tego modułu. Operacja zostanie zapisana w dzienniku.</p><p id="publish-error" class="form-error" role="alert"></p><div class="dialog-footer"><button id="publish-cancel" class="button secondary">Anuluj</button><button id="publish-send" class="button primary">Wyślij na Discord</button></div></dialog>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

@@ -1,8 +1,9 @@
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
 
 const {
   Client,
   GatewayIntentBits,
+  Partials,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -16,7 +17,7 @@ const {
   TextInputStyle,
 } = require("discord.js");
 
-const { registerOsadzeniModule } = require("./osadzeni");
+const { registerOsadzeniModule, stopTimers } = require("./osadzeni");
 const { registerWezwanieModule } = require("./modules/wezwanie");
 const { registerRaportModule } = require("./modules/raport");
 const { registerStopnieModule } = require("./modules/stopnie");
@@ -24,6 +25,10 @@ const { registerDokumentyModule } = require("./modules/dokumenty");
 const { registerPropozycjeModule } = require("./modules/propozycje");
 const { registerWyplatyModule } = require("./modules/wyplaty");
 
+const management = require("./services/management");
+const network = require("./services/network");
+const validate = require("./services/domain-validation");
+const storage = require("./services/storage");
 const fs = require("fs");
 const path = require("path");
 
@@ -31,12 +36,7 @@ const TOKEN = process.env.TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-if (!TOKEN || !CLIENT_ID || !GUILD_ID) {
-  console.error("❌ Brakuje TOKEN, CLIENT_ID lub GUILD_ID w Environment Variables.");
-  process.exit(1);
-}
-
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.SW_DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "sw-data.json");
 
 if (!fs.existsSync(DATA_DIR)) {
@@ -49,32 +49,11 @@ const DEFAULT_DATA = {
 };
 
 function loadData() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) {
-      fs.writeFileSync(DATA_FILE, JSON.stringify(DEFAULT_DATA, null, 2), "utf8");
-      return JSON.parse(JSON.stringify(DEFAULT_DATA));
-    }
-
-    const data = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
-    return {
-      settings: { ...DEFAULT_DATA.settings, ...(data.settings || {}) },
-      members: data.members || {},
-    };
-  } catch (error) {
-    console.error("❌ Błąd odczytu bazy danych:", error);
-    return JSON.parse(JSON.stringify(DEFAULT_DATA));
-  }
+  const data = storage.readJson(DATA_FILE, DEFAULT_DATA, item => item.members && typeof item.members === "object" && !Array.isArray(item.members));
+  return { settings: { ...DEFAULT_DATA.settings, ...(data.settings || {}) }, members: data.members };
 }
-
 let db = loadData();
-
-function saveData() {
-  try {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2), "utf8");
-  } catch (error) {
-    console.error("❌ Błąd zapisu bazy danych:", error);
-  }
-}
+function saveData() { storage.writeJson(DATA_FILE, db); }
 
 // ======================================================
 // RANGI I KORPUSY SŁUŻBY WIĘZIENNEJ
@@ -193,7 +172,37 @@ function hasStaffPermission(interaction) {
   return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 }
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+management.registerResource("members", {
+  list: () => Object.values(db.members).map(member => ({ ...member, id: member.userId })),
+  create(input) {
+    const userId = validate.snowflake(input.userId || input.id);
+    if (db.members[userId]) validate.fail("Funkcjonariusz jest już w ewidencji.", 409);
+    const member = validateMember({ ...input, userId });
+    db.members[userId] = member; saveData(); return { ...member, id: userId };
+  },
+  update(id, input) {
+    const previous = validate.present(db.members[id]);
+    if ((input.userId && input.userId !== id) || (input.id && input.id !== id)) validate.fail("Nie można zmienić Discord ID.");
+    const member = validateMember({ ...previous, ...input, userId: id });
+    db.members[id] = member; saveData(); return { ...member, id };
+  },
+  remove(id) { const previous = validate.present(db.members[id]); delete db.members[id]; saveData(); return { ...previous, id }; }
+});
+function validateMember(input) {
+  const userId = validate.snowflake(input.userId);
+  const number = validate.integer(input.number, "numer służbowy", 1, 9999);
+  if (Object.values(db.members).some(member => member.userId !== userId && member.number === number)) validate.fail("Numer służbowy jest zajęty.", 409);
+  const rank = input.rank || "Rekrut";
+  if (!RANKS.includes(rank)) validate.fail("Nieprawidłowy stopień służbowy.");
+  return { userId, number, rank, corps: getCorps(rank), name: validate.text(input.name || "", "nazwisko", 120, false),
+    plus: validate.integer(input.plus ?? 0, "plusy"), minus: validate.integer(input.minus ?? 0, "minusy"),
+    reprimands: validate.integer(input.reprimands ?? 0, "nagany"), joinedAt: db.members[userId]?.joinedAt || new Date().toISOString() };
+}
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
+});
 const osadzeniCommands = registerOsadzeniModule(client);
 const wezwanieCommands = registerWezwanieModule(client);
 const raportCommands = registerRaportModule(client);
@@ -269,7 +278,7 @@ const commands = [
 ].map((command) => command.toJSON()).concat(osadzeniCommands, wezwanieCommands, raportCommands, stopnieCommands, dokumentyCommands, propozycjeCommands, wyplatyCommands);
 
 async function registerCommands() {
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+  const rest = network.configureRest(new REST({ version: "10" })).setToken(TOKEN);
   const payoutGuildId = process.env.SW_GUILD_ID || GUILD_ID;
   const mainCommands = payoutGuildId === GUILD_ID
     ? commands
@@ -299,6 +308,10 @@ client.on("interactionCreate", async (interaction) => {
   const name = interaction.commandName;
 
   try {
+    const staffCommands = ["sw-dodaj", "sw-awans", "sw-degradacja", "sw-wydalenie", "sw-nagana", "sw-plus", "sw-minus", "sw-usun", "sw-ustaw-logi"];
+    if (staffCommands.includes(name) && !hasStaffPermission(interaction)) {
+      return interaction.reply({ content: "❌ Brak uprawnień. Potrzebujesz uprawnienia Zarządzanie serwerem.", ephemeral: true });
+    }
     if (name === "sw-ustaw-logi") {
       if (!hasStaffPermission(interaction)) {
         return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", ephemeral: true });
@@ -352,7 +365,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const user = interaction.options.getUser("osoba");
-    const commandsWithMember = ["sw-awans", "sw-degradacja", "sw-wydalenie", "sw-nagana", "sw-plus", "sw-minus", "sw-info"];
+    const commandsWithMember = ["sw-awans", "sw-degradacja", "sw-wydalenie", "sw-nagana", "sw-plus", "sw-minus", "sw-info", "sw-usun"];
 
     if (commandsWithMember.includes(name) && (!user || !db.members[user.id])) {
       return interaction.reply({ content: "❌ Ta osoba nie znajduje się w ewidencji. Użyj `/sw-dodaj`.", ephemeral: true });
@@ -504,4 +517,23 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-client.login(TOKEN);
+let started = false;
+async function start() {
+  if (started) return;
+  if (process.env.OFFLINE !== "1" && (!TOKEN || !CLIENT_ID || !GUILD_ID)) {
+    throw new Error("Brakuje TOKEN, CLIENT_ID lub GUILD_ID. Ustaw je w środowisku albo użyj OFFLINE=1 do pracy lokalnej.");
+  }
+  try {
+    if (process.env.OFFLINE !== "1") network.configureClient(client);
+    await management.startManagement({ client });
+    if (process.env.OFFLINE === "1") console.log("Tryb lokalny: wszystkie moduły zainicjalizowane, Discord wyłączony.");
+    else await client.login(TOKEN);
+    started = true;
+  } catch (error) { stopTimers(); await client.destroy(); await management.stop(); await network.close(); throw error; }
+}
+async function stop() { stopTimers(); await client.destroy(); await management.stop(); await network.close(); started = false; }
+if (require.main === module) {
+  start().catch(error => { console.error("Nie udało się uruchomić SW:", error.message); process.exitCode = 1; });
+  for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { stop().then(() => process.exit(0)).catch(() => process.exit(1)); });
+}
+module.exports = { client, commands, start, stop, RANKS };

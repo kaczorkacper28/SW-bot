@@ -1,3 +1,4 @@
+const management = require("../services/management");
 const {
     Client,
     GatewayIntentBits,
@@ -739,6 +740,8 @@ client.on("interactionCreate", async interaction => {
             embeds: [embed],
             components: [createTicketButtons()]
         });
+        management.recordDiscord("documents", { id: channel.id, authorId: interaction.user.id,
+            title: document.label, kind: document.label, fields, content: fields.map(field => field.name + ": " + field.value).join("\n"), channelId: channel.id, status: "nowy" });
 
         await interaction.editReply({
             content:
@@ -843,6 +846,7 @@ client.on("interactionCreate", async interaction => {
                 );
             }
 
+            management.recordDiscord("documents", { id: channel.id, status: "zamknięty", reviewedBy: interaction.user.id });
             setTimeout(async () => {
                 try {
                     await channel.delete();
@@ -874,6 +878,7 @@ client.on("interactionCreate", async interaction => {
         // ==============================================
 
         if (interaction.customId === "document_approve") {
+            management.recordDiscord("documents", { id: channel.id, status: "zatwierdzony", reviewedBy: interaction.user.id });
 
             const embed = new EmbedBuilder()
                 .setTitle("✅ DOKUMENT ZATWIERDZONY")
@@ -907,6 +912,7 @@ client.on("interactionCreate", async interaction => {
         // ==============================================
 
         if (interaction.customId === "document_reject") {
+            management.recordDiscord("documents", { id: channel.id, status: "odrzucony", reviewedBy: interaction.user.id });
 
             const embed = new EmbedBuilder()
                 .setTitle("❌ DOKUMENT ODRZUCONY")
