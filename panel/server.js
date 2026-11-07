@@ -45,12 +45,16 @@ async function readJson(request) {
 
 function sessionResponse(user) { return { authenticated:true, id:user.id, username:user.username, role:user.role }; }
 
-function rateLimitAddress(request, { publicOrigin, trustCloudflareProxy }) {
+function trustedCloudflareAddress(request, { publicOrigin, trustCloudflareProxy }) {
   const address = request.socket.remoteAddress;
   const loopback = address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
   const connectingIp = request.headers["cf-connecting-ip"];
   if (trustCloudflareProxy && publicOrigin?.startsWith("https://") && loopback && typeof connectingIp === "string" && net.isIP(connectingIp)) return connectingIp;
-  return address;
+  return null;
+}
+
+function rateLimitAddress(request, options) {
+  return trustedCloudflareAddress(request, options) || request.socket.remoteAddress;
 }
 
 function createPanelServer(options = {}) {
@@ -84,8 +88,20 @@ function createPanelServer(options = {}) {
       if (!allowedHosts.has(request.headers.host)) return send(response, 400, { error: "Nieprawidłowy adres panelu." });
       const origin = publicOrigin || `http://${request.headers.host}`;
       const url = new URL(request.url, origin);
+      // Opening an old local bookmark while sharing must lead to the HTTPS login,
+      // not render a form whose requests will fail the canonical-origin check.
+      // API readiness remains local; a trusted tunnel can also rewrite Host.
+      if (publicOrigin?.startsWith("https://") && request.headers.host !== new URL(publicOrigin).host &&
+          ["GET", "HEAD"].includes(request.method) && ["/", "/index.html"].includes(url.pathname) &&
+          !trustedCloudflareAddress(request, { publicOrigin, trustCloudflareProxy })) {
+        response.writeHead(302, { Location: `${publicOrigin}${url.pathname}${url.search}`, "Cache-Control": "no-store" });
+        return response.end();
+      }
       const isMutation = !["GET", "HEAD", "OPTIONS"].includes(request.method);
-      if (isMutation && request.headers.origin !== origin) return send(response, 403, { error: "Żądanie musi pochodzić z panelu." });
+      if (isMutation && request.headers.origin !== origin) {
+        const localPage = publicOrigin?.startsWith("https://") && request.headers.origin === `http://${request.headers.host}`;
+        return send(response, 403, { error: localPage ? "Otwórz panel przez aktualny LINK DO PULPITU z Termuxa (HTTPS)." : "Żądanie musi pochodzić z panelu." });
+      }
       if (isMutation && !String(request.headers["content-type"] || "").startsWith("application/json")) return send(response, 415, { error: "Wymagany format application/json." });
       const now = Date.now();
       for (const [token, session] of sessions) if (session.expiresAt <= now) sessions.delete(token);

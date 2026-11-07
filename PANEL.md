@@ -157,6 +157,12 @@ Program wymaga istniejącego administratora. Gdy panel i tunel są gotowe, wypis
 otwierają ten sam adres w swoich przeglądarkach i logują się własnymi kontami.
 Hasła przekazuj indywidualnie; nigdy nie udostępniaj tokena bota.
 
+Podczas udostępniania wejście na `http://127.0.0.1:3200/` lub
+`http://localhost:3200/` przekierowuje na aktualny adres HTTPS. Jeżeli pozostała
+otwarta wcześniejsza karta lokalna, otwórz **LINK DO PULPITU** ponownie przed
+logowaniem. Nie trzeba zmieniać loginu ani hasła. Prywatne sprawdzenie gotowości
+panelu pozostaje dostępne lokalnie i nie jest przekierowywane.
+
 Panel nadal nasłuchuje lokalnie; cloudflared dostarcza dostęp HTTPS. Port
 zarządzania 3210 nie jest udostępniany. Nie potrzeba konta Cloudflare ani
 płatnego hostingu do tymczasowego Quick Tunnel. Link może zmienić się po
