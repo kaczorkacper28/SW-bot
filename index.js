@@ -173,6 +173,7 @@ function hasStaffPermission(interaction) {
 }
 
 management.registerResource("members", {
+  notificationChannelId: () => db.settings.logChannelId,
   list: () => Object.values(db.members).map(member => ({ ...member, id: member.userId })),
   create(input) {
     const userId = validate.snowflake(input.userId || input.id);

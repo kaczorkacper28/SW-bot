@@ -50,6 +50,21 @@ function fixture(t) {
     async restart() { await queue.stop(); queue = createPrisonerNotifications(options); return queue; } };
 }
 
+test("duplicate prisoner channel names require an explicit channel ID", async t => {
+  const f = fixture(t);
+  f.guild.channels.cache.set("100000000000000004", { ...f.channel, id: "100000000000000004", name: "osadzeni" });
+  const record = f.prisoner();
+  f.records.set(record.id, record);
+  const result = await f.queue.enqueue("create", record, "operator-test");
+  assert.equal(result.status, "failed");
+  assert.equal(result.canRetry, true);
+  assert.equal(f.writes.length, 0);
+  f.options.channelId = () => f.channel.id;
+  await f.restart();
+  assert.equal((await f.queue.retry(result.id)).status, "sent");
+  assert.equal(f.writes.length, 1);
+});
+
 test("offline create, edit and removal survive restart and share exactly one card", async t => {
   const f = fixture(t);
   f.client.ready = false;

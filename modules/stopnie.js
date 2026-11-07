@@ -240,6 +240,7 @@ function registerStopnieModule(client) {
     return { userId, section, number };
   }
   management.registerResource("ranks", {
+    notificationChannelId: () => data.channelId,
     list: () => Object.keys(SECTION_NAMES).flatMap(section => data.sections[section].map(item => ({ ...item, section, id: item.userId }))),
     create(input) {
       const item = validateEntry(input);
@@ -254,7 +255,7 @@ function registerStopnieModule(client) {
       data.sections[previous.section] = data.sections[previous.section].filter(member => member.userId !== id);
       data.sections[item.section].push({ userId: id, number: item.number }); persistList(); return { ...item, id };
     },
-    remove(id) { const item = validate.present(findMember(id)); data.sections[item.section] = data.sections[item.section].filter(member => member.userId !== id); persistList(); return item; }
+    remove(id) { const item = validate.present(findMember(id)); data.sections[item.section] = data.sections[item.section].filter(member => member.userId !== id); persistList(); return { ...item, id: item.userId }; }
   });
   client.once('ready', () => { updateMessage(client).catch(console.error); });
   const stopnieNames = new Set(commands.map(command => command.name));

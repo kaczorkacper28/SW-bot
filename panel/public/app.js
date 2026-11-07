@@ -50,6 +50,7 @@
   const rankNames = ["Rekrut", "Szeregowy", "Starszy szeregowy", "Kapral", "Starszy kapral", "Plutonowy", "Sierżant", "Starszy sierżant", "Sierżant sztabowy", "Chorąży", "Starszy chorąży", "Chorąży sztabowy", "Podporucznik", "Porucznik", "Kapitan", "Major", "Podpułkownik", "Pułkownik", "Generał", "Generał inspektor"];
   const statuses = ["nowy", "w toku", "zatwierdzony", "odrzucony", "zamknięty"];
   const roleLabels = {admin:"Administrator",operator:"Operator",viewer:"Podgląd"};
+  const businessResources = ["members","prisoners","ranks","reports","calls","documents","proposals","payouts"];
   const actionLabels = {create:"Dodano wpis",update:"Zaktualizowano wpis",remove:"Usunięto wpis",delete:"Usunięto wpis",discord:"Aktywność Discord",publish:"Opublikowano na Discordzie","publish-pending":"Rozpoczęto publikację","publish-uncertain":"Sprawdź wynik publikacji na Discordzie"};
   const sections = {szefostwo: "Szefostwo", pracownicy: "Pracownicy SW", rekruci: "Rekruci"};
   const resources = {
@@ -108,6 +109,7 @@
       {key:"reason",label:"Powód wypłaty",required:true,type:"textarea",max:1000,full:true},
     ]},
     audit: {label:"Dziennik operacji",icon:"activity",description:"Historia operacji zarejestrowanych przez system.",readonly:true},
+    notifications: {label:"Powiadomienia",icon:"send",description:"Automatyczne zgłoszenia zmian na Discordzie.",readonly:true},
     users: {label:"Użytkownicy",icon:"shield",description:"Konta służbowe i uprawnienia dostępu do panelu.",adminOnly:true},
   };
   let snapshot = null;
@@ -123,6 +125,7 @@
   let users = null;
   let usersLoading = false;
   let usersError = "";
+  let notificationFilters = {resource:"",status:""};
   const canWrite = () => authenticated && ["admin","operator"].includes(account.role);
   const isAdmin = () => authenticated && account.role === "admin";
   const dialogsOpen = () => ["#record-dialog","#confirm-dialog","#publish-dialog"].some(selector => $(selector).open);
@@ -272,6 +275,10 @@
       if (currentView === key) link.setAttribute("aria-current", "page");
       link.append(icon(meta.icon),el("span", "", meta.label));
       if (["members","prisoners","reports"].includes(key) && snapshot) link.append(el("span","nav-count",collection(key).length));
+      if (key === "notifications" && snapshot) {
+        const waiting = notifications().filter(entry => entry.status !== "sent").length;
+        if (waiting) link.append(el("span","nav-count",waiting));
+      }
       link.addEventListener("click", event => {event.preventDefault();navigate(key);});
       navigation.append(link);
     }
@@ -321,6 +328,7 @@
     $("#breadcrumb-view").textContent = currentView === "overview" ? "Pulpit" : resources[currentView].label;
     document.title = (currentView === "overview" ? "Pulpit" : resources[currentView].label) + " — SW Centrum";
     if (currentView === "users") renderUsers();
+    else if (currentView === "notifications") renderNotificationPage();
     else if (currentView === "overview") renderOverview(); else renderResource();
   }
   async function loadUsers(silent = false) {
@@ -542,16 +550,16 @@
     const main = $("#main");main.replaceChildren(heading(resource.label,resource.description,actions));
     if (resource.notice) main.append(el("div","notice",resource.notice));
     if (!canWrite()) main.append(el("div","intro-strip","Dostęp do podglądu — edycję wpisów wykonuje operator lub administrator."));
-    if (["reports","calls","proposals"].includes(currentView)) main.append(el("div","intro-strip",canWrite()?"Zapis formularza tworzy wpis w ewidencji. Aby opublikować go na Discordzie, użyj przycisku wysyłki przy wpisie. Bot musi być połączony.":"Publikacją wpisów na Discordzie zajmuje się operator lub administrator. Stan publikacji jest widoczny w ewidencji."));
+    if (businessResources.includes(currentView)) main.append(el("div","intro-strip","Dodanie, edycja i usunięcie wpisu automatycznie zgłasza zmianę na Discordzie. Stan zgłoszenia jest widoczny przy wpisie i w historii poniżej."));
+    if (["reports","calls","proposals"].includes(currentView)) main.append(el("div","intro-strip",canWrite()?"Zmiany są automatycznie zgłaszane na Discordzie. Osobna publikacja wysyła pełną treść wpisu — służy do tego przycisk „Opublikuj pełną treść”.":"Automatyczne zgłoszenie zmiany i publikacja pełnej treści to osobne wiadomości. Pełną treść może opublikować operator lub administrator."));
     if (currentView === "documents") main.append(el("div","intro-strip","Dokumenty z panelu trafiają do ewidencji. Formularze i tickety Discord obsługuje ten sam bot komendą /setup-dokumenty."));
-    if (currentView === "prisoners") main.append(el("div","intro-strip","Dodanie, edycja i usunięcie osadzonego zapisuje ewidencję oraz zleca automatyczne powiadomienie Discord. Stan wysyłki jest widoczny przy wpisie i w historii poniżej."));
     const filters = el("div","filter-bar");
     const searchBox = el("label","search-box");searchBox.append(icon("search"));
     const input = el("input");input.id="records-search";input.type="search";input.placeholder="Szukaj w ewidencji…";input.setAttribute("aria-label","Szukaj w ewidencji");input.value=search;
     input.addEventListener("input",() => {search=input.value;renderRecords();});searchBox.append(input);
     filters.append(searchBox,el("span","filter-label",collection(currentView).length + " wpisów w ewidencji"));main.append(filters);
     const tableArea = el("section","panel-card");tableArea.id="records-area";main.append(tableArea);renderRecords();
-    if (currentView === "prisoners") main.append(renderNotifications());
+    if (businessResources.includes(currentView)) main.append(renderNotifications(currentView));
   }
   function renderRecords() {
     const node = $("#records-area");if (!node) return;
@@ -577,7 +585,7 @@
   function titleCell(title,detail) {const node=el("div","record-detail");node.append(el("strong","record-title",title || "Bez tytułu"));if(detail)node.append(el("span","",String(detail).slice(0,230)));return node;}
   function buildTable(name,records,compact=false) {
     const wrapper=el("div","table-scroll");const table=el("table");
-    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","DISCORD","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","AKCJE"],reports:["RAPORT","AUTOR","STATUS","DATA","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS","DATA","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS","DATA","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
+    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","POWIADOMIENIE","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","POWIADOMIENIE","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","POWIADOMIENIE","AKCJE"],reports:["RAPORT","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","POWIADOMIENIE","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","POWIADOMIENIE","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
     const head=el("thead");const row=el("tr");
     const labels=compact?headings[name].slice(0,3):headings[name].filter(label => label !== "AKCJE" || canWrite());
     for(const label of labels){const th=el("th","",label);th.scope="col";row.append(th);}head.append(row);table.append(head);
@@ -587,13 +595,14 @@
       if(name==="members")cells=[personCell(record.name || "Funkcjonariusz SW",record.userId || record.id),textCell("SW-"+String(record.number || "?").padStart(2,"0")),badge(record.rank || "Rekrut"),textCell("+"+(record.plus||0)+" / −"+(record.minus||0)+" · Nagany: "+(record.reprimands||0))];
       if(name==="prisoners"){
         const seconds=Number(record.remainingSeconds||0);const minutes=Math.max(0,Math.ceil(seconds/60));
-        cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min"),notificationBadge(notifications().find(item=>String(item.recordId)===String(record.id)))];
+        cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min")];
       }
       if(name==="ranks")cells=[textCell(record.userId||record.id),badge(sections[record.section]||record.section),textCell((record.section==="rekruci"?"SWRO":"SW-")+String(record.number||"?").padStart(2,"0"))];
       if(["reports","documents","proposals"].includes(name))cells=[titleCell(record.title||resources[name].label,record.content || fieldDescription(record.fields)),textCell(name==="documents"?(record.kind||record.type):(record.author||record.authorId)),publicationStatus(record),textCell(formatDate(record.createdAt))];
       if(name==="calls")cells=[titleCell(record.title||"Wezwanie",record.reason||record.content),textCell(record.target||record.name||record.userId),publicationStatus(record),textCell(formatDate(record.createdAt))];
       if(name==="payouts")cells=[textCell(record.recipient||record.userId),textCell(Number(record.amount||0).toLocaleString("pl-PL",{style:"currency",currency:"PLN"})),titleCell(record.reason||record.content,(record.paid===true||record.status==="wypłacona")?"Wypłata potwierdzona przez bota":"Ewidencja — bez przelewu"),badge(record.status)];
       if(name==="audit")cells=[titleCell(record.title||record.message||actionLabels[record.action]||record.action,record.recordId||record.targetId),textCell(resources[record.resource]?.label||record.resource||record.type),textCell(record.actor||record.username||"System"),textCell(formatDate(record.createdAt||record.timestamp||record.at))];
+      if (!compact && businessResources.includes(name)) cells.push(notificationBadge(notifications(name).find(item=>String(item.recordId)===String(record.id||record.userId))));
       const tr=el("tr");for(const node of compact?cells.slice(0,3):cells){const td=el("td");td.append(node);tr.append(td);}
       if(!compact&&!resources[name].readonly&&canWrite()){
         const td=el("td");const actions=el("div","action-cell");
@@ -604,8 +613,8 @@
           const publish = button("","icon-button",()=>confirmPublish(name,record),"send");
           const sent = record.discordMessageId || record.messageId || ["pending","published","uncertain"].includes(record.publishState);
           publish.disabled = snapshot?.status?.online !== true || Boolean(sent);
-          publish.title = sent ? "Wysyłka została już rozpoczęta. Sprawdź status wpisu." : snapshot?.status?.online !== true ? "Wysyłka wymaga połączenia bota z Discordem" : "Wyślij na Discord";
-          publish.setAttribute("aria-label","Wyślij na Discord: " + (record.title || record.target || record.id));
+          publish.title = sent ? "Publikacja pełnej treści została już rozpoczęta. Sprawdź status wpisu." : snapshot?.status?.online !== true ? "Publikacja pełnej treści wymaga połączenia bota z Discordem" : "Opublikuj pełną treść";
+          publish.setAttribute("aria-label","Opublikuj pełną treść: " + (record.title || record.target || record.id));
           actions.append(publish);
         }
         actions.append(remove);td.append(actions);tr.append(td);
@@ -619,29 +628,35 @@
   }
   function publicationStatus(record) {
     const node = el("div","record-status");node.append(badge(record.status));
-    if (record.discordMessageId || record.messageId || record.publishState === "published") node.append(el("small","published-note","Wysłano na Discord"));
-    else if (record.publishState === "pending") node.append(el("small","published-note","Wysyłka rozpoczęta"));
-    else if (record.publishState === "uncertain") node.append(el("small","published-note uncertain","Sprawdź kanał Discord"));
+    if (record.discordMessageId || record.messageId || record.publishState === "published") node.append(el("small","published-note","Pełna treść opublikowana"));
+    else if (record.publishState === "pending") node.append(el("small","published-note","Trwa publikacja pełnej treści"));
+    else if (record.publishState === "uncertain") node.append(el("small","published-note uncertain","Sprawdź publikację na Discordzie"));
     return node;
   }
-  function notifications() {
-    return (Array.isArray(snapshot?.notifications)?snapshot.notifications:[]).slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  function notificationResource(entry) {return entry.resource || "prisoners";}
+  function notifications(resource = null) {
+    return (Array.isArray(snapshot?.notifications)?snapshot.notifications:[]).filter(entry=>businessResources.includes(notificationResource(entry))&&(!resource||notificationResource(entry)===resource)).slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
   }
   function notificationBadge(notification) {
-    const labels={sent:"Wysłano",pending:"Oczekuje",failed:"Wymaga uwagi"};
+    const labels={sent:"Zmiana zgłoszona",pending:"Oczekuje",failed:"Wymaga uwagi"};
     const node=el("span","badge "+(notification?.status==="sent"?"green":notification?.status==="failed"?"red":notification?.status==="pending"?"gold":"gray"),labels[notification?.status]||"Brak informacji");
     if(notification?.message)node.title=notification.message;
     return node;
   }
-  function renderNotifications() {
+  function renderNotifications(resource = null, {limit = 10,status = ""} = {}) {
     const card=el("section","panel-card recent-table");
-    card.append(cardHeader("Powiadomienia Discord","Ostatnie 10 powiadomień o zmianach osadzonych"));
-    const rows=notifications().slice(0,10);
-    if(!rows.length){card.append(emptyState("activity","Brak powiadomień","Po zmianie danych osadzonego pojawi się tu potwierdzony stan wysyłki."));return card;}
-    const labels={create:"Dodanie osadzonego",update:"Edycja osadzonego",remove:"Usunięcie osadzonego",delete:"Usunięcie osadzonego"};
+    card.dataset.notificationResource=resource||"all";
+    card.append(cardHeader(resource?"Powiadomienia Discord":"Historia zgłoszeń",resource?"Ostatnie "+limit+" zgłoszeń · "+resources[resource].label:"Zgłoszenia zmian ze wszystkich modułów"));
+    const rows=notifications(resource).filter(entry=>!status||entry.status===status).slice(0,limit);
+    if(!rows.length){card.append(emptyState("activity","Brak powiadomień","Po zmianie wpisu pojawi się tu stan automatycznego zgłoszenia na Discordzie."));return card;}
+    const labels={create:"Dodano wpis",update:"Zmieniono wpis",remove:"Usunięto wpis",delete:"Usunięto wpis"};
     for(const entry of rows){
-      const row=el("div","notification-row");const copy=el("div","notification-copy");
-      copy.append(el("strong","",(labels[entry.action]||"Zmiana osadzonego")+(entry.recordId?" · "+entry.recordId:"")),el("p","",entry.message||"Oczekiwanie na informację o wysyłce."),el("small","",formatDate(entry.createdAt)));
+      const entryResource=notificationResource(entry);
+      const row=el("div","notification-row");row.dataset.resource=entryResource;row.dataset.recordId=String(entry.recordId||"");
+      const copy=el("div","notification-copy");
+      const record=collection(entryResource).find(item=>String(item.id||item.userId)===String(entry.recordId));
+      const recordLabel=record?.title||record?.name||record?.imie||record?.recipient||entry.recordId;
+      copy.append(el("strong","",(labels[entry.action]||"Zmiana wpisu")+" · "+resources[entryResource].label+(recordLabel?" · "+String(recordLabel).slice(0,100):"")),el("p","",entry.message||"Oczekiwanie na informację o wysyłce."),el("small","",[entry.actor,formatDate(entry.createdAt)].filter(Boolean).join(" · ")));
       const actions=el("div","notification-actions");actions.append(notificationBadge(entry));
       if(isAdmin()&&entry.status!=="sent"&&entry.canRetry){
         const retry=button("Ponów wysyłkę","button secondary small",async()=>{
@@ -654,6 +669,20 @@
     }
     return card;
   }
+  function renderNotificationPage() {
+    const main=$("#main");
+    main.replaceChildren(heading("Powiadomienia Discord","Automatyczne zgłoszenia dodania, edycji i usunięcia wpisów we wszystkich modułach.",[
+      button("Odśwież","button secondary",()=>refresh(),"refresh")
+    ]));
+    main.append(el("div","intro-strip","Powiadomienie zgłasza zmianę w ewidencji. Publikacja pełnej treści, realizacja wypłaty i obsługa ticketów pozostają osobnymi operacjami."));
+    const filters=el("div","notification-filters");
+    for(const [key,label,options] of [["resource","Moduł",[["","Wszystkie moduły"],...businessResources.map(name=>[name,resources[name].label])]], ["status","Stan",[["","Wszystkie stany"],["pending","Oczekujące"],["sent","Zgłoszone"],["failed","Wymagające uwagi"]]]]){
+      const wrapper=el("label","notification-filter",label);const select=el("select");select.setAttribute("aria-label",label);select.id="notification-filter-"+key;
+      for(const [value,text]of options){const option=el("option","",text);option.value=value;select.append(option);}select.value=notificationFilters[key];
+      select.addEventListener("change",()=>{notificationFilters[key]=select.value;renderNotificationPage();});wrapper.append(select);filters.append(wrapper);
+    }
+    main.append(filters,renderNotifications(notificationFilters.resource||null,{limit:100,status:notificationFilters.status}));
+  }
   function showNotificationOutcome(savedMessage,notification) {
     if(notification && ["sent","pending","failed"].includes(notification.status)) {
       toast(savedMessage+" "+notification.message,notification.status==="sent"?false:"warning");
@@ -664,7 +693,7 @@
     const resource=resources[name];if(!resource || resource.readonly)return;
     activeForm={name,record};
     $("#dialog-title").textContent=(record?"Edytuj ":"Dodaj ")+resource.singular;
-    $("#record-error").textContent="";$("#record-submit").disabled=false;
+    $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent="Zapisz wpis";
     const fields=$("#dialog-fields");fields.replaceChildren();
     for(const field of resource.fields){
       if(field.editOnly&&!record)continue;
@@ -717,8 +746,8 @@
     try{
       const result=await api("/api/"+name+(record?"/"+encodeURIComponent(record.id||record.userId):""),{method:record?"PATCH":"POST",body:JSON.stringify(body)});
       $("#record-dialog").close();
-      if(name==="prisoners")showNotificationOutcome("Zapisano osadzonego w ewidencji.",result.notification);
-      else toast(name==="payouts"?"Zapisano wpis w ewidencji. Pieniądze nie zostały wysłane.":"Zapisano wpis w ewidencji.");
+      const savedMessage=name==="payouts"?"Zapisano wpis w ewidencji wypłat. Pieniądze nie zostały wysłane.":name==="prisoners"?"Zapisano osadzonego w ewidencji.":"Zapisano wpis w module „"+resources[name].label+"”.";
+      showNotificationOutcome(savedMessage,result.notification);
       await refresh();
     }catch(error){$("#record-error").textContent=error.message;}finally{submit.disabled=false;submit.textContent="Zapisz wpis";}
   }
@@ -742,7 +771,8 @@
         if(!canWrite())throw new Error("Twoje konto ma dostęp tylko do podglądu.");
         const result=await api("/api/"+name+"/"+encodeURIComponent(record.id||record.userId),{method:"DELETE",body:"{}"});
         $("#confirm-dialog").close();
-        if(name==="prisoners")showNotificationOutcome("Usunięto osadzonego z ewidencji.",result.notification);else toast("Usunięto wpis z ewidencji.");
+        const removedMessage=name==="payouts"?"Usunięto wpis z ewidencji wypłat. Saldo nie zostało zmienione.":name==="prisoners"?"Usunięto osadzonego z ewidencji.":"Usunięto wpis z modułu „"+resources[name].label+"”.";
+        showNotificationOutcome(removedMessage,result.notification);
         await refresh();
       }
     }catch(error){toast(error.message,true);}finally{$("#confirm-delete").disabled=false;}
@@ -750,7 +780,7 @@
   function confirmPublish(name,record) {
     if(!canWrite())return;
     pendingPublish = {name,record};
-    $("#publish-description").textContent = "Do publikacji: „" + (record.title || record.target || record.id) + "”.";
+    $("#publish-description").textContent = "Pełna treść wpisu „" + (record.title || record.target || record.id) + "” zostanie opublikowana jako osobna wiadomość. Automatyczne zgłoszenie zmiany nie zastępuje tej publikacji.";
     $("#publish-error").textContent = "";
     $("#publish-send").disabled = false;
     $("#publish-dialog").showModal();
@@ -762,13 +792,13 @@
     $("#publish-error").textContent = "";
     try {
       await api("/api/actions/publish",{method:"POST",body:JSON.stringify({resource:pendingPublish.name,id:String(pendingPublish.record.id)})});
-      $("#publish-dialog").close();toast("Discord potwierdził publikację wpisu.");
+      $("#publish-dialog").close();toast("Discord potwierdził publikację pełnej treści wpisu.");
       await refresh();
     } catch (error) {
       $("#publish-dialog").close();toast(error.message,true);
       await refresh(true);
     } finally {
-      $("#publish-send").disabled = false;$("#publish-send").textContent = "Wyślij na Discord";
+      $("#publish-send").disabled = false;$("#publish-send").textContent = "Opublikuj pełną treść";
     }
   }
   $("#login-form").addEventListener("submit",async event=>{

@@ -63,9 +63,9 @@ uruchomienia samego panelu zatrzymuje również bota.
 - **Stopnie:** wspólna lista organizacyjna w sekcjach szefostwo, pracownicy, rekruci.
   Jest to lista obsługiwana komendami `/stopnie-*`, odrębna od stopnia w karcie kadrowej.
 - **Raporty, wezwania, dokumenty, propozycje:** rejestry lokalne panelu i historia
-  działań wykonanych przez moduły Discord. Dodanie lokalnego wpisu nie wysyła wiadomości
-  na Discord ani nie tworzy ticketu. Raport, wezwanie i propozycję możesz następnie
-  jawnie wysłać przyciskiem „Wyślij na Discord”, jeśli bot jest online i ustawiono
+  działań wykonanych przez moduły Discord. Każdy zapis, edycja i usunięcie z panelu
+  wysyła krótkie powiadomienie o zmianie. Raport, wezwanie i propozycję możesz też
+  wysłać przyciskiem „Opublikuj pełną treść”, jeśli bot jest online i ustawiono
   odpowiednio `REPORT_CHANNEL_ID`, `CALL_CHANNEL_ID`, `PROPOSALS_CHANNEL_ID`.
   Publikacja propozycji dodaje reakcje głosowania. Przy niepotwierdzonej wysyłce
   system blokuje powtórzenie: sprawdź kanał przed rozstrzygnięciem operacji.
@@ -159,7 +159,52 @@ CTRL+C kończy tunel i uruchomione przez niego procesy.
 Testy helpera używają atrapy cloudflared i nie publikują danych w internecie.
 Połączenie rzeczywistego tunelu trzeba sprawdzić na telefonie.
 
-## Automatyczne wiadomości o osadzonych
+## Automatyczne wiadomości ze wszystkich modułów
+
+Dodanie, edycja i usunięcie przez panel tworzy powiadomienie dla **kadr, osadzonych,
+stopni, raportów, wezwań, dokumentów, propozycji i wypłat**. Wiadomość zawiera rodzaj
+zmiany, dane wpisu i nazwę operatora panelu. Powiadomienia nie obejmują kont
+użytkowników ani dziennika operacji.
+
+Kanały wybiera się osobno dla modułów. Wszystkie muszą należeć do `GUILD_ID`:
+
+| Moduł | Opcjonalna zmienna w `.env` | Ustawienie zastępcze / nazwa kanału |
+| --- | --- | --- |
+| Kadry | `PANEL_MEMBERS_CHANNEL_ID` | Kanał logów zapisany przez moduł kadr, następnie `kadry` lub `funkcjonariusze` |
+| Osadzeni | `PRISONERS_CHANNEL_ID` | `osadzeni` lub `osądzeni` |
+| Stopnie | `PANEL_RANKS_CHANNEL_ID` | Kanał zapisany przez moduł stopni, następnie `stopnie` lub `lista-sw` |
+| Raporty | `PANEL_REPORTS_CHANNEL_ID` | `REPORT_CHANNEL_ID`, następnie `raporty` lub `raporty-służbowe` |
+| Wezwania | `PANEL_CALLS_CHANNEL_ID` | `CALL_CHANNEL_ID`, następnie `wezwania` |
+| Dokumenty | `PANEL_DOCUMENTS_CHANNEL_ID` | `dokumenty` |
+| Propozycje | `PANEL_PROPOSALS_CHANNEL_ID` | `PROPOSALS_CHANNEL_ID`, następnie `propozycje` |
+| Wypłaty | `PANEL_PAYOUTS_CHANNEL_ID` | `LOG_CHANNEL_ID`, następnie `wypłaty` |
+
+Podane ID ma pierwszeństwo. Brak dostępu do wskazanego kanału jest błędem;
+bot nie wybiera wtedy innego kanału. Przy wyszukiwaniu nazw pomija emoji,
+separatory i polskie znaki. Gdy pasuje kilka kanałów, ustaw jednoznaczne ID.
+Bot nie tworzy kanałów automatycznie. Potrzebuje uprawnień do wyświetlania kanału,
+wysyłania wiadomości i osadzania linków; dla kart osadzonych również historii.
+
+W widoku **Powiadomienia** można filtrować historię według modułu i stanu.
+Historia jest też dostępna przy konkretnym wpisie. Po zapisie panel pokazuje
+rzeczywisty wynik: wysłano, oczekuje, błąd albo wynik wymagający sprawdzenia.
+Administrator może ponawiać zakończone błędem wysyłki po usunięciu przyczyny.
+Zapis danych pozostaje ważny także przy awarii Discorda.
+
+Automatyczny komunikat informuje o zmianie ewidencji. Pełna publikacja raportu,
+wezwania lub propozycji jest osobną operacją. Samo powiadomienie nie rozpoczyna
+głosowania, nie tworzy ticketu dokumentów, nie nadaje ról i nie wykonuje przelewu.
+Komunikat o wypłacie dotyczy wpisu w ewidencji, również przy jego edycji lub usunięciu.
+Wiadomości nie uruchamiają wzmianek. Operacje wykonane bezpośrednio przez komendy
+Discord zachowują własne wiadomości; zapis ich historii nie tworzy drugiego powiadomienia.
+
+Kolejki zapisują się w `data/resource-notifications.json` oraz
+`data/prisoner-notifications.json`. Zmiany wykonane offline czekają na powrót
+bota, a restart nie usuwa oczekujących wpisów. Niepotwierdzona wysyłka jest blokowana
+przed powtórzeniem: sprawdź wtedy kanał Discord. Dane kolejek wymagają takiej samej
+kopii zapasowej jak pozostałe pliki w `data/`.
+
+### Karty osadzonych
 
 Bot używa kanału `PRISONERS_CHANNEL_ID` na serwerze `GUILD_ID`. Bez podanego ID
 szuka istniejącego kanału o nazwie **osadzeni** (również z emoji lub nazwą

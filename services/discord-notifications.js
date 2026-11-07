@@ -71,8 +71,11 @@ function createPrisonerNotifications({ client, getRecord, saveReference, buildCa
     let channel;
     if (configuredChannel) channel = guild.channels.cache?.get(configuredChannel) || await guild.channels.fetch(configuredChannel);
     else {
-      channel = guild.channels.cache?.find(item => channelName(item.name) === "osadzeni");
-      if (!channel && guild.channels.fetch) channel = (await guild.channels.fetch())?.find(item => channelName(item.name) === "osadzeni");
+      const channels = guild.channels.fetch ? await guild.channels.fetch() : guild.channels.cache;
+      const matches = [...(channels?.values?.() || [])].filter(item => channelName(item?.name) === "osadzeni" &&
+        [0, 5].includes(item.type) && item.isTextBased?.() && typeof item.send === "function");
+      if (matches.length > 1) throw new Error("Kilka kanałów pasuje do osadzonych. Ustaw PRISONERS_CHANNEL_ID.");
+      [channel] = matches;
     }
     if (!channel || String(channel.guildId || channel.guild?.id || "") !== configuredGuild ||
       !channel.isTextBased?.() || typeof channel.send !== "function" || ![0, 5].includes(channel.type)) {

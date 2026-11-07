@@ -4,6 +4,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { createResourceNotifications } = require("./resource-notifications");
 
 const DATA_DIR = process.env.MANAGEMENT_DATA_DIR || process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
 const RECORDS_FILE = path.join(DATA_DIR, "panel-records.json");
@@ -14,6 +15,7 @@ let server;
 let serverReady;
 let currentClient;
 let notifications;
+let resourceNotifications;
 
 fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 let records = Object.fromEntries([...RESOURCES, "audit"].map(name => [name, []]));
@@ -100,6 +102,11 @@ function registerResource(name, handlers) {
 
 function registerNotifications(provider) { notifications = provider; }
 
+function notificationList() {
+  return [...(notifications?.list() || []).map(item => ({ resource: "prisoners", ...item })), ...(resourceNotifications?.list() || [])]
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))).slice(0, 200);
+}
+
 function json(response, status, value) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   response.end(JSON.stringify(value));
@@ -174,7 +181,7 @@ async function state() {
   const online = Boolean(currentClient?.isReady?.());
   return {
     collections,
-    notifications: notifications?.list() || [],
+    notifications: notificationList(),
     status: {
       online, mode: process.env.OFFLINE === "1" ? "offline" : (online ? "connected" : "connecting"),
       guilds: currentClient?.guilds?.cache?.size || 0,
@@ -193,7 +200,9 @@ async function mutate(resource, method, id, input, actor) {
     item = action === "create" ? await handlers.create(input, { actor: String(actor).slice(0, 64) }) : await handlers[action](id, input);
     if (item == null || item === false) throw Object.assign(new Error("Nie znaleziono wpisu."), { status: 404 });
   } else if (action === "create") {
-    return { record: record(resource, { ...input, id: crypto.randomUUID(), createdAt: new Date().toISOString() }, actor) };
+    const now = new Date().toISOString();
+    item = { ...input, id: crypto.randomUUID(), createdAt: now, updatedAt: now };
+    records[resource].unshift(item);
   } else {
     const index = records[resource].findIndex(entry => String(entry.id) === id);
     if (index < 0) throw Object.assign(new Error("Nie znaleziono wpisu."), { status: 404 });
@@ -206,11 +215,15 @@ async function mutate(resource, method, id, input, actor) {
   audit(resource, action, typeof item === "object" ? item : { id }, actor);
   persist();
   let notification;
-  if (typeof handlers?.afterMutation === "function") {
-    try { notification = await handlers.afterMutation(action, item, String(actor).slice(0, 64)); }
+  if (typeof handlers?.afterMutation === "function" || (resource !== "prisoners" && resourceNotifications)) {
+    try {
+      notification = typeof handlers?.afterMutation === "function"
+        ? { resource, ...await handlers.afterMutation(action, item, String(actor).slice(0, 64)) }
+        : await resourceNotifications.enqueue(resource, action, item, String(actor).slice(0, 64));
+    }
     catch (error) {
       console.error("Zmiana została zapisana, ale powiadomienie Discord nie zostało przygotowane:", error.message);
-      notification = { status: "failed", canRetry: false, message: "Zapisano zmianę, ale nie udało się zapisać kolejki powiadomień. Sprawdź dziennik bota i Discord przed ponowieniem." };
+      notification = { resource, recordId: item?.id || id, action, status: "failed", canRetry: false, message: "Zapisano zmianę, ale nie udało się zapisać kolejki powiadomień. Sprawdź dziennik bota i Discord przed ponowieniem." };
     }
   }
   return { record: item, ...(notification ? { notification } : {}) };
@@ -232,6 +245,9 @@ async function publish(input, actor) {
   try { channel = await currentClient.channels.fetch(channelId); }
   catch { throw Object.assign(new Error("Nie można odczytać kanału publikacji. Sprawdź identyfikator i uprawnienia bota."), { status: 503 }); }
   if (!channel?.isTextBased?.() || typeof channel.send !== "function") throw Object.assign(new Error("Kanał publikacji nie obsługuje wiadomości tekstowych."), { status: 503 });
+  if (!process.env.GUILD_ID || String(channel.guildId || channel.guild?.id || "") !== String(process.env.GUILD_ID) || ![0, 5].includes(channel.type)) {
+    throw Object.assign(new Error("Kanał publikacji musi należeć do skonfigurowanego serwera Discord GUILD_ID."), { status: 503 });
+  }
   // Channel lookup can overlap an edit or deletion. Never send a stale snapshot.
   const current = records[input.resource].find(entry => String(entry.id) === input.id);
   if (current !== item) throw Object.assign(new Error("Wpis został zmieniony lub usunięty podczas przygotowania publikacji. Odśwież dane."), { status: 409 });
@@ -281,7 +297,10 @@ async function publish(input, actor) {
 async function startManagement({ client, host = "127.0.0.1", port = Number(process.env.MANAGEMENT_PORT || 3210) } = {}) {
   if (server) return serverReady;
   currentClient = client;
+  resourceNotifications = createResourceNotifications({ client, dataDir: DATA_DIR,
+    getFallbackChannelId: resource => registry.get(resource)?.notificationChannelId?.() });
   notifications?.start();
+  resourceNotifications.start();
   const key = getBridgeKey();
   server = http.createServer(async (request, response) => {
     try {
@@ -289,11 +308,13 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
       const url = new URL(request.url, "http://localhost");
       if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { status: "ok" });
       if (request.method === "GET" && url.pathname === "/api/state") return json(response, 200, await state());
-      if (request.method === "GET" && url.pathname === "/api/notifications") return json(response, 200, { notifications: notifications?.list() || [] });
+      if (request.method === "GET" && url.pathname === "/api/notifications") return json(response, 200, { notifications: notificationList() });
       const retryNotification = /^\/api\/notifications\/([^/]+)\/retry$/.exec(url.pathname);
       if (request.method === "POST" && retryNotification) {
-        if (!notifications) return json(response, 503, { error: "Kolejka powiadomień jest niedostępna." });
-        return json(response, 200, { notification: await notifications.retry(decodeURIComponent(retryNotification[1])) });
+        const notificationId = decodeURIComponent(retryNotification[1]);
+        if (resourceNotifications?.has(notificationId)) return json(response, 200, { notification: await resourceNotifications.retry(notificationId) });
+        if (!notifications) return json(response, 404, { error: "Nie znaleziono powiadomienia." });
+        return json(response, 200, { notification: { resource: "prisoners", ...await notifications.retry(notificationId) } });
       }
       if (request.method === "POST" && url.pathname === "/api/actions/publish") {
         return json(response, 200, { record: await publish(await readJson(request), request.headers["x-panel-user"] || "panel") });
@@ -339,6 +360,7 @@ async function stop() {
     await new Promise((resolve, reject) => active.close(error => error ? reject(error) : resolve()));
   }
   await notifications?.stop();
+  await resourceNotifications?.stop();
 }
 
 module.exports = { registerResource, registerNotifications, record, recordDiscord, startManagement, start: startManagement, stop };
