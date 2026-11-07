@@ -3,7 +3,10 @@
 Jeden bot Discord z modułami SW oraz osobny ciemny panel administracyjny.
 Instrukcja panelu, uruchamiania i zakres operacji: **[PANEL.md](PANEL.md)**.
 
-Szybki start na Node.js 22: `npm ci`, `npm run panel:admin -- --username admin`,
+**Android bez płatnego hostingu:** [instrukcja Termuxa](ANDROID-TERMUX.md).
+Konfigurator w terminalu: `npm run configure`.
+
+Szybki start na Node.js 22 lub 24: `npm ci`, `npm run panel:admin -- --username admin`,
 `npm run dev:offline`. Z tokenem Discord użyj `npm run dev`.
 
 # 🛡️ Służba Więzienna — Discord Bot

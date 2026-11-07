@@ -5,7 +5,7 @@ wezwania, dokumenty, propozycje i ręczne wypłaty korzystają z jednego klienta
 Nie uruchamiaj równocześnie starych botów z osobnych repozytoriów.
 
 Panel ma osobny proces HTTP i ciemny interfejs służbowy w języku polskim. Nie wymaga
-budowania frontendu ani dodatkowej bazy danych. Wymagany jest Node.js 22.
+budowania frontendu ani dodatkowej bazy danych. Wymagany jest Node.js 22 lub 24. Instrukcja telefonu z Androidem: [ANDROID-TERMUX.md](ANDROID-TERMUX.md).
 
 ## Pierwsze uruchomienie
 

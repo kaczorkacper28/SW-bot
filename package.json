@@ -10,10 +10,11 @@
     "panel:admin": "node panel/setup-admin.js",
     "test": "node --test test/*.test.js",
     "dev": "node scripts/start-all.js",
-    "dev:offline": "node scripts/start-all.js --offline"
+    "dev:offline": "node scripts/start-all.js --offline",
+    "configure": "node scripts/configure.js"
   },
   "engines": {
-    "node": "22.x"
+    "node": "22.x || 24.x"
   },
   "dependencies": {
     "discord.js": "^14.22.1",
