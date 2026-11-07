@@ -18,8 +18,9 @@ npm run dev:offline
 ```
 
 Konfigurator pyta o niewidoczne hasło (minimum 12 znaków). Nie ma domyślnego hasła.
-Przy ponownym wykonaniu konfiguratora konto jest zastępowane; zrestartuj proces panelu,
-aby zakończyć wcześniejsze sesje. Nie podawaj hasła jako argumentu polecenia.
+Polecenie `panel:admin` tworzy lub resetuje wskazane konto administratora,
+zachowując pozostałe konta. Zmiana hasła unieważnia wcześniejsze sesje tego konta.
+Nie podawaj hasła jako argumentu polecenia.
 
 Panel domyślnie nasłuchuje na porcie **3200**, wyłącznie na `127.0.0.1`.
 Tryb `dev:offline` uruchamia panel i moduły bota bez łączenia z Discordem.
@@ -55,8 +56,10 @@ uruchomienia samego panelu zatrzymuje również bota.
 
 - **Kadry:** wspólna ewidencja z komendami `/sw-*`; numer służbowy, stopień, plusy,
   minusy, nagany. Do identyfikacji używany jest Discord ID, nie nazwa użytkownika.
-- **Osadzeni:** wspólny rejestr, dane kary i pozostały czas; zmiany są dostępne dla
-  modułu Discord w tym samym procesie. Panel pozwala pauzować licznik.
+- **Osadzeni:** wspólny rejestr, dane kary i pozostały czas. Dodanie, edycja lub
+  usunięcie w panelu tworzy automatyczne powiadomienie na Discordzie i aktualizuje
+  kartę osadzonego. Panel pozwala pauzować licznik. Kolejka zachowuje zmiany offline
+  i pokazuje rzeczywisty stan wysyłki; szczegóły poniżej.
 - **Stopnie:** wspólna lista organizacyjna w sekcjach szefostwo, pracownicy, rekruci.
   Jest to lista obsługiwana komendami `/stopnie-*`, odrębna od stopnia w karcie kadrowej.
 - **Raporty, wezwania, dokumenty, propozycje:** rejestry lokalne panelu i historia
@@ -73,8 +76,9 @@ uruchomienia samego panelu zatrzymuje również bota.
 - **Dziennik:** historia operacji panelu i zdarzeń zapisywanych przez moduły.
 
 Dane pozostają w ignorowanym katalogu `data/`: `sw-data.json`, `osadzeni.json`,
-`sw-stopnie.json`, `panel-records.json`. Konto panelu zawiera sól i skrót scrypt w
-`panel-admin.json`; klucz prywatnego połączenia panel–bot jest w `panel-bridge.key`.
+`sw-stopnie.json`, `panel-records.json`. Konta zawierają sól i skróty scrypt w `panel-users.json`. Dotychczasowy
+`panel-admin.json` jest migrowany przy pierwszym użyciu; po migracji nadrzędny
+jest `panel-users.json`. Klucz prywatnego połączenia panel–bot jest w `panel-bridge.key`.
 Zrób kopię katalogu przed migracją i zapewnij trwały dysk na hostingu.
 Istniejących danych nie zastępuj szablonami. Dawna lista stopni z
 `modules/data/sw-stopnie.json` jest kopiowana do nowej lokalizacji tylko wtedy,
@@ -100,7 +104,7 @@ Przy udostępnianiu panelu użyj reverse proxy z HTTPS, ustaw dokładny
 używaj panelu tylko lokalnie. Sesje mają cookies `HttpOnly` i `SameSite=Strict`,
 na HTTPS także `Secure`; zmiany wymagają właściwego nagłówka `Origin`.
 Logowanie ma ograniczenie prób, a sesje wygasają po 8 godzinach i po restarcie panelu.
-Uprawnienia panelu należą do lokalnego administratora, nie są logowaniem Discord OAuth.
+Panel obsługuje osobne konta i role; nie używa logowania Discord OAuth.
 
 ## Sprawdzenie
 
@@ -113,3 +117,63 @@ integrację komend, współdzielone dane i API panelu. Testy prawdziwego Discord
 UnbelievaBoat wymagają poprawnej konfiguracji oraz oddzielnego sprawdzenia na serwerze.
 Aplikacja Android pozostaje osobnym klientem w repozytorium `SW-android`;
 nie jest uruchamiana przez `npm run dev`.
+
+## Inni użytkownicy i dostęp przez internet
+
+Po zalogowaniu jako administrator otwórz **Użytkownicy**. Utwórz osobne konto
+dla każdej osoby i wybierz rolę:
+
+| Rola | Uprawnienia |
+| --- | --- |
+| Administrator | Zarządzanie danymi, kontami i ponawianiem powiadomień |
+| Operator | Dodawanie, edycja i usuwanie danych oraz publikacja na Discordzie |
+| Podgląd | Odczyt danych, bez operacji zapisu |
+
+Nie ma publicznej rejestracji. Hasła mają minimum 12 znaków. Reset hasła,
+zmiana roli i wyłączenie konta unieważniają wcześniejsze sesje. Ostatniego
+aktywnego administratora nie można usunąć, wyłączyć ani pozbawić roli.
+Stare konto administratora zostaje zachowane podczas migracji.
+
+Dla telefonu z Termuxem można użyć tymczasowego linku HTTPS Cloudflare.
+Najpierw zatrzymaj dotychczasowy `npm run dev` przez CTRL+C, następnie:
+
+```sh
+pkg install -y cloudflared
+cd ~/SW-bot
+npm run panel:share
+```
+
+Program wymaga istniejącego administratora. Gdy panel i tunel są gotowe, wypisze
+**LINK DO PULPITU**. Otwórz ten link także na własnym telefonie. Inne osoby
+otwierają ten sam adres w swoich przeglądarkach i logują się własnymi kontami.
+Hasła przekazuj indywidualnie; nigdy nie udostępniaj tokena bota.
+
+Panel nadal nasłuchuje lokalnie; cloudflared dostarcza dostęp HTTPS. Port
+zarządzania 3210 nie jest udostępniany. Nie potrzeba konta Cloudflare ani
+płatnego hostingu do tymczasowego Quick Tunnel. Link może zmienić się po
+ponownym uruchomieniu, a telefon i Termux muszą pozostać online. Usługa
+zewnętrzna może odmówić połączenia lub je przerwać; nie jest to hosting 24/7.
+CTRL+C kończy tunel i uruchomione przez niego procesy.
+
+`npm run panel:share:offline` udostępnia tryb lokalny bez logowania do Discorda.
+Testy helpera używają atrapy cloudflared i nie publikują danych w internecie.
+Połączenie rzeczywistego tunelu trzeba sprawdzić na telefonie.
+
+## Automatyczne wiadomości o osadzonych
+
+Bot używa kanału `PRISONERS_CHANNEL_ID` na serwerze `GUILD_ID`. Bez podanego ID
+szuka istniejącego kanału o nazwie **osadzeni** (również z emoji lub nazwą
+osądzeni). Jeżeli istnieje kilka podobnych kanałów, ustaw jednoznaczne ID w `.env`.
+Bot potrzebuje dostępu do kanału, wysyłania wiadomości, osadzania linków i
+czytania historii wiadomości.
+
+Dodanie tworzy kartę osadzonego; edycja odświeża kartę i wysyła komunikat
+o zmianie; usunięcie oznacza kartę jako usuniętą i wysyła komunikat. Powiadomienie
+zawiera nazwę operatora panelu. Wiadomości nie uruchamiają zbiorowych wzmianek.
+
+Stan powiadomień jest w `data/prisoner-notifications.json`. Przy pracy offline
+zmiany czekają i są wysyłane po powrocie bota. Błędy konfiguracji lub uprawnień
+pokazują niepowodzenie; administrator może je ponowić po usunięciu przyczyny.
+Niepotwierdzona wysyłka jest blokowana przed powtórzeniem, aby nie tworzyć
+duplikatów — sprawdź wtedy kanał Discord. Zapis danych nie jest cofany przez
+awarię Discorda. Samo odświeżanie licznika kary nie wysyła nowych komunikatów.

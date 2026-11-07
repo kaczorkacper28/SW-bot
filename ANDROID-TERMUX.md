@@ -126,3 +126,11 @@ Nie zmieniaj hasła, jeśli komunikat dotyczy połączenia, a nie danych logowan
 
 Jeśli panel nadal się nie otwiera, sprawdź ostatnie komunikaty w Termuxie.
 Przekazuj wyłącznie treść błędu, bez tokena, hasła i zawartości `.env`.
+
+## Udostępnianie pulpitu dowództwa innym osobom
+
+Pulpit jest częścią tego repozytorium **SW-bot**, niezależnie od aplikacji
+`SW-android`. Instrukcja kont i internetowego linku HTTPS znajduje się
+w [PANEL.md](PANEL.md#inni-użytkownicy-i-dostęp-przez-internet).
+Po utworzeniu administratora można uruchomić `npm run panel:share`
+z zainstalowanym pakietem `cloudflared`.

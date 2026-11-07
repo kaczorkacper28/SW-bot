@@ -17,6 +17,7 @@ const {
 const management = require("./services/management");
 const validate = require("./services/domain-validation");
 const storage = require("./services/storage");
+const { createPrisonerNotifications } = require("./services/discord-notifications");
 const fs = require("fs");
 const path = require("path");
 
@@ -56,11 +57,20 @@ const db = loadDatabase();
 function saveDatabase() { storage.writeJson(DATA_FILE, db); }
 
 function registerOsadzeniModule(client) {
+const notifications = createPrisonerNotifications({
+    client, getRecord: getOsadzony,
+    saveReference(id, reference) {
+        const prisoner = getOsadzony(id);
+        if (prisoner) { Object.assign(prisoner, reference); saveDatabase(); }
+    },
+    buildCard: item => buildOsadzonyEmbed(item, false), buildButtons: buildTimerButtons,
+});
+management.registerNotifications(notifications);
 management.registerResource("prisoners", {
     list() { let changed = false; for (const item of db.osadzeni) if (ensureTimer(item)) changed = true; if (changed) saveDatabase(); return db.osadzeni.map(item => ({ ...item })); },
-    create(input) {
+    create(input, { actor = "panel" } = {}) {
         const item = validatePrisoner(input);
-        item.id = createOsadzonyId(); item.dodanyPrzez = "panel"; item.utworzono = new Date().toISOString();
+        item.id = createOsadzonyId(); item.dodanyPrzez = actor; item.utworzono = new Date().toISOString();
         db.osadzeni.push(item); saveDatabase(); return { ...item };
     },
     update(id, input) {
@@ -68,7 +78,6 @@ management.registerResource("prisoners", {
         if (input.id && input.id !== previous.id) validate.fail("Nie można zmienić ID osadzonego.");
         const item = validatePrisoner(input, previous);
         Object.assign(previous, item); saveDatabase();
-        if (client.isReady()) refreshOsadzonyMessage(previous).catch(console.error);
         return { ...previous };
     },
     remove(id) {
@@ -76,7 +85,8 @@ management.registerResource("prisoners", {
         db.osadzeni = db.osadzeni.filter(item => item !== previous);
         db.przepustki = db.przepustki.filter(item => item.osadzonyId !== previous.id);
         saveDatabase(); return { ...previous };
-    }
+    },
+    afterMutation(action, item, actor) { return notifications.enqueue(action, item, actor); }
 });
 function validatePrisoner(input, previous) {
     const item = { ...(previous || {}), ...input };
@@ -260,8 +270,8 @@ function buildTimerButtons(osadzony) {
     );
 }
 
-function buildOsadzonyEmbed(osadzony) {
-    const seconds = getRemainingSeconds(osadzony, true);
+function buildOsadzonyEmbed(osadzony, persist = true) {
+    const seconds = getRemainingSeconds(osadzony, persist);
     const remainingMinutes = Math.ceil(seconds / 60);
     const durationText = osadzony.paused
         ? `⏸️ WSTRZYMANA • ${remainingMinutes} min.`
@@ -279,7 +289,8 @@ function buildOsadzonyEmbed(osadzony) {
             { name: "🕐 Koniec kary", value: getEndTime(osadzony, seconds), inline: true },
             { name: "⏱️ Długość / pozostało", value: durationText, inline: true },
             { name: "🎫 Przepustka", value: osadzony.przepustka ? "✅ Udzielona" : "❌ Brak", inline: true },
-            { name: "📝 Uwagi", value: osadzony.uwagi || "Brak" }
+            { name: "📝 Uwagi", value: (osadzony.uwagi || "Brak").slice(0, 1024) },
+            ...(osadzony.dodanyPrzez ? [{ name: "Dodano przez", value: String(osadzony.dodanyPrzez).slice(0, 128) }] : [])
         )
         .setFooter({ text: "Służba Więzienna • Rejestr Osadzonych • Sterowanie czasem: Generał Inspektor SW ⚖️👑" })
         .setTimestamp();
@@ -292,12 +303,16 @@ async function sendLog(guild, embed) {
 
 async function refreshOsadzonyMessage(osadzony) {
     if (!osadzony.messageId || !osadzony.channelId) return;
-    try {
-        const channel = await client.channels.fetch(osadzony.channelId);
-        if (!channel?.isTextBased()) return;
-        const message = await channel.messages.fetch(osadzony.messageId);
-        await message.edit({ embeds: [buildOsadzonyEmbed(osadzony)], components: [buildTimerButtons(osadzony)] });
-    } catch (_) {}
+    return notifications.withRecordLock(osadzony.id, async () => {
+        try {
+            if (!getOsadzony(osadzony.id)) return;
+            const channel = await client.channels.fetch(osadzony.channelId);
+            if (!channel?.isTextBased() || String(channel.guildId || channel.guild?.id) !== String(process.env.GUILD_ID)) return;
+            const message = await channel.messages.fetch(osadzony.messageId);
+            if (!getOsadzony(osadzony.id)) return;
+            await message.edit({ embeds: [buildOsadzonyEmbed(osadzony)], components: [buildTimerButtons(osadzony)], allowedMentions: { parse: [] } });
+        } catch (_) {}
+    });
 }
 
 const commands = [

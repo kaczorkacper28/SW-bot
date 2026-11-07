@@ -13,6 +13,7 @@ const registry = new Map();
 let server;
 let serverReady;
 let currentClient;
+let notifications;
 
 fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
 let records = Object.fromEntries([...RESOURCES, "audit"].map(name => [name, []]));
@@ -97,6 +98,8 @@ function registerResource(name, handlers) {
   registry.set(name, handlers);
 }
 
+function registerNotifications(provider) { notifications = provider; }
+
 function json(response, status, value) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   response.end(JSON.stringify(value));
@@ -171,6 +174,7 @@ async function state() {
   const online = Boolean(currentClient?.isReady?.());
   return {
     collections,
+    notifications: notifications?.list() || [],
     status: {
       online, mode: process.env.OFFLINE === "1" ? "offline" : (online ? "connected" : "connecting"),
       guilds: currentClient?.guilds?.cache?.size || 0,
@@ -186,10 +190,10 @@ async function mutate(resource, method, id, input, actor) {
   let item;
   if (handlers) {
     if (typeof handlers[action] !== "function") throw Object.assign(new Error("Operacja niedostępna."), { status: 405 });
-    item = action === "create" ? await handlers.create(input) : await handlers[action](id, input);
+    item = action === "create" ? await handlers.create(input, { actor: String(actor).slice(0, 64) }) : await handlers[action](id, input);
     if (item == null || item === false) throw Object.assign(new Error("Nie znaleziono wpisu."), { status: 404 });
   } else if (action === "create") {
-    return record(resource, { ...input, id: crypto.randomUUID(), createdAt: new Date().toISOString() }, actor);
+    return { record: record(resource, { ...input, id: crypto.randomUUID(), createdAt: new Date().toISOString() }, actor) };
   } else {
     const index = records[resource].findIndex(entry => String(entry.id) === id);
     if (index < 0) throw Object.assign(new Error("Nie znaleziono wpisu."), { status: 404 });
@@ -201,7 +205,15 @@ async function mutate(resource, method, id, input, actor) {
   }
   audit(resource, action, typeof item === "object" ? item : { id }, actor);
   persist();
-  return item;
+  let notification;
+  if (typeof handlers?.afterMutation === "function") {
+    try { notification = await handlers.afterMutation(action, item, String(actor).slice(0, 64)); }
+    catch (error) {
+      console.error("Zmiana została zapisana, ale powiadomienie Discord nie zostało przygotowane:", error.message);
+      notification = { status: "failed", canRetry: false, message: "Zapisano zmianę, ale nie udało się zapisać kolejki powiadomień. Sprawdź dziennik bota i Discord przed ponowieniem." };
+    }
+  }
+  return { record: item, ...(notification ? { notification } : {}) };
 }
 
 async function publish(input, actor) {
@@ -269,6 +281,7 @@ async function publish(input, actor) {
 async function startManagement({ client, host = "127.0.0.1", port = Number(process.env.MANAGEMENT_PORT || 3210) } = {}) {
   if (server) return serverReady;
   currentClient = client;
+  notifications?.start();
   const key = getBridgeKey();
   server = http.createServer(async (request, response) => {
     try {
@@ -276,6 +289,12 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
       const url = new URL(request.url, "http://localhost");
       if (request.method === "GET" && url.pathname === "/api/health") return json(response, 200, { status: "ok" });
       if (request.method === "GET" && url.pathname === "/api/state") return json(response, 200, await state());
+      if (request.method === "GET" && url.pathname === "/api/notifications") return json(response, 200, { notifications: notifications?.list() || [] });
+      const retryNotification = /^\/api\/notifications\/([^/]+)\/retry$/.exec(url.pathname);
+      if (request.method === "POST" && retryNotification) {
+        if (!notifications) return json(response, 503, { error: "Kolejka powiadomień jest niedostępna." });
+        return json(response, 200, { notification: await notifications.retry(decodeURIComponent(retryNotification[1])) });
+      }
       if (request.method === "POST" && url.pathname === "/api/actions/publish") {
         return json(response, 200, { record: await publish(await readJson(request), request.headers["x-panel-user"] || "panel") });
       }
@@ -288,8 +307,8 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
         return json(response, 405, { error: "Niedozwolona metoda." });
       }
       const input = request.method === "DELETE" ? {} : await readJson(request);
-      const item = await mutate(resource, request.method, id, input, request.headers["x-panel-user"] || "panel");
-      return json(response, request.method === "POST" ? 201 : 200, request.method === "DELETE" ? { ok: true } : { record: item });
+      const result = await mutate(resource, request.method, id, input, request.headers["x-panel-user"] || "panel");
+      return json(response, request.method === "POST" ? 201 : 200, { ...(request.method === "DELETE" ? { ok: true } : {}), ...result });
     } catch (error) {
       if (!error.status || error.status >= 500) console.error("Management request failed:", error.message);
       const known = error.status >= 400 && error.status < 600;
@@ -312,12 +331,14 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
 }
 
 async function stop() {
-  if (!server) return;
-  const active = server;
-  await serverReady;
-  server = undefined;
-  serverReady = undefined;
-  await new Promise((resolve, reject) => active.close(error => error ? reject(error) : resolve()));
+  if (server) {
+    const active = server;
+    await serverReady;
+    server = undefined;
+    serverReady = undefined;
+    await new Promise((resolve, reject) => active.close(error => error ? reject(error) : resolve()));
+  }
+  await notifications?.stop();
 }
 
-module.exports = { registerResource, record, recordDiscord, startManagement, start: startManagement, stop };
+module.exports = { registerResource, registerNotifications, record, recordDiscord, startManagement, start: startManagement, stop };

@@ -69,9 +69,9 @@ test("panel has no default account and both APIs protect private state", async (
   });
   assert.equal(setup.status, 0, setup.stderr);
   assert.ok(!setup.stdout.includes(password));
-  const saved = fs.readFileSync(path.join(dataDir, "panel-admin.json"), "utf8");
+  const saved = fs.readFileSync(path.join(dataDir, "panel-users.json"), "utf8");
   assert.ok(!saved.includes(password));
-  assert.equal(fs.statSync(path.join(dataDir, "panel-admin.json")).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(dataDir, "panel-users.json")).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.join(dataDir, "panel-bridge.key")).mode & 0o777, 0o600);
 });
 
@@ -84,7 +84,11 @@ test("login checks passwords and uses a private same-site session cookie", async
   assert.match(value, /HttpOnly/);
   assert.match(value, /SameSite=Strict/);
   cookie = value.split(";")[0];
-  assert.deepEqual((await request(panel, "/api/session")).data, { authenticated: true, username: "test-admin" });
+  const session = (await request(panel, "/api/session")).data;
+  assert.equal(session.authenticated,true);
+  assert.equal(session.username,"test-admin");
+  assert.equal(session.role,"admin");
+  assert.equal(typeof session.id,"string");
   const state = await request(panel, "/api/state");
   assert.equal(state.status, 200);
   assert.equal(state.data.status.mode, "offline");

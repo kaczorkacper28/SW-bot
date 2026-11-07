@@ -154,3 +154,23 @@ test("concurrent configuration edits and symlinks are preserved instead of overw
     assert.equal(fs.readFileSync(path.join(setup.directory, "shared"), "utf8"), "OTHER=concurrent-change\n");
   } finally { setup.cleanup(); }
 });
+
+test("setup preserves an existing multiuser store and its administrator without legacy file", async () => {
+  const setup = fixture();
+  try {
+    fs.writeFileSync(path.join(setup.directory,".env"),`TOKEN=${token}\nCLIENT_ID=${clientId}\nGUILD_ID=${guildId}\n`);
+    const dataDir=path.join(setup.directory,"data");const {createAuthStore}=require('../panel/auth-store');const store=createAuthStore({dataDir});store.upsertAdmin({username:'commander',password});store.createUser({username:'officer',password,role:'operator'});
+    const filename=path.join(dataDir,'panel-users.json');const before=fs.readFileSync(filename,'utf8');
+    const result=await runSetup({directory:setup.directory,argv:[],environment:{},output:outputCapture(),ask:answers(['','',''])});
+    assert.equal(result.adminCreated,false);assert.equal(result.adminPath,filename);assert.equal(fs.readFileSync(filename,'utf8'),before);assert.equal(fs.existsSync(path.join(dataDir,'panel-admin.json')),false);
+  } finally {setup.cleanup()}
+});
+test("wizard administrator reset updates the authoritative store and retains other users", async () => {
+  const setup = fixture();
+  try {
+    fs.writeFileSync(path.join(setup.directory,".env"),`TOKEN=${token}\nCLIENT_ID=${clientId}\nGUILD_ID=${guildId}\n`);
+    const dataDir=path.join(setup.directory,"data");const {createAuthStore}=require('../panel/auth-store');const store=createAuthStore({dataDir});store.upsertAdmin({username:'commander',password});const officer=store.createUser({username:'officer',password,role:'operator'});
+    const replacement='A different fixture password!';await runSetup({directory:setup.directory,argv:['--reset-admin'],environment:{},output:outputCapture(),ask:answers(['','','','',replacement,replacement])});
+    assert.equal(store.listUsers().length,2);assert.equal(store.listUsers().find(user=>user.id===officer.id).role,'operator');assert.ok(await store.authenticate('commander',replacement));assert.equal(await store.authenticate('commander',password),null);
+  } finally {setup.cleanup()}
+});

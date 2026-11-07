@@ -1,6 +1,8 @@
 # Zintegrowany bot i osobny panel SW
 
 Jeden bot Discord z modułami SW oraz osobny ciemny panel administracyjny.
+Panel obsługuje osobne konta, role i automatyczne powiadomienia o osadzonych na Discordzie.
+Dostęp przez internet z Termuxa: `npm run panel:share` (pakiet `cloudflared`).
 Instrukcja panelu, uruchamiania i zakres operacji: **[PANEL.md](PANEL.md)**.
 
 **Android bez płatnego hostingu:** [instrukcja Termuxa](ANDROID-TERMUX.md).

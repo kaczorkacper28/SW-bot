@@ -11,7 +11,9 @@
     "test": "node --test test/*.test.js",
     "dev": "node scripts/start-all.js",
     "dev:offline": "node scripts/start-all.js --offline",
-    "configure": "node scripts/configure.js"
+    "configure": "node scripts/configure.js",
+    "panel:share": "node panel/share.js",
+    "panel:share:offline": "node panel/share.js --offline"
   },
   "engines": {
     "node": "22.x || 24.x"

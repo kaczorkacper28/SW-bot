@@ -176,13 +176,19 @@ async function runSetup({ directory = path.join(__dirname, ".."), argv = process
   const original = readOptional(envPath);
   const existing = dotenv.parse(original || "");
   const dataDir = path.resolve(directory, environment.PANEL_DATA_DIR || existing.PANEL_DATA_DIR || environment.SW_DATA_DIR || existing.SW_DATA_DIR || "data");
-  const adminPath = path.join(dataDir, "panel-admin.json");
-  const originalAdmin = readOptional(adminPath);
-  const hasAdmin = originalAdmin !== null;
-  if (hasAdmin && !options.resetAdmin) {
+  const legacyAdminPath = path.join(dataDir, "panel-admin.json");
+  const usersPath = path.join(dataDir, "panel-users.json");
+  const originalUsers = readOptional(usersPath);
+  const authStore = originalUsers !== null ? require("../panel/auth-store").createAuthStore({dataDir}) : null;
+  const adminPath = authStore ? usersPath : legacyAdminPath;
+  const originalAdmin = authStore ? null : readOptional(legacyAdminPath);
+  const hasAdmin = authStore ? authStore.hasUsers() : originalAdmin !== null;
+  let adminDefault = authStore ? authStore.listUsers().find(user => user.active && user.role === "admin").username : "admin";
+  if (!authStore && hasAdmin && !options.resetAdmin) {
     let admin;
     try { admin = JSON.parse(originalAdmin); } catch { fail("Plik konta panelu jest uszkodzony. Zachowano go. Aby utworzyć konto ponownie, użyj --reset-admin."); }
     if (!/^[a-zA-Z0-9_.@-]{3,64}$/.test(admin?.username || "") || !/^[a-f0-9]{64}$/.test(admin?.salt || "") || !/^[a-f0-9]{64}$/.test(admin?.passwordHash || "")) fail("Plik konta panelu jest nieprawidłowy. Zachowano go. Aby odtworzyć konto, użyj --reset-admin.");
+    adminDefault = admin.username;
   }
   output.write("Konfiguracja bota SW i panelu. Token oraz hasło pozostaną niewidoczne. Ctrl+C anuluje bez zapisu.\n");
   const tokenInput = await ask({ label: existing.TOKEN ? "Token bota (Enter zachowuje zapisany): " : "Token bota Discord: ", secret: true });
@@ -194,7 +200,7 @@ async function runSetup({ directory = path.join(__dirname, ".."), argv = process
   let config = validateConfiguration({ token, clientId, guildId }, { requirePassword: false });
   let newAdmin;
   if (!hasAdmin || options.resetAdmin) {
-    const username = (await ask({ label: "Nazwa konta panelu [admin]: " })).trim() || "admin";
+    const username = (await ask({ label: `Nazwa konta panelu [${adminDefault}]: ` })).trim() || adminDefault;
     const password = await ask({ label: "Hasło panelu (minimum 12 znaków): ", secret: true, maxLength: 1024 });
     const passwordConfirmation = await ask({ label: "Powtórz hasło panelu: ", secret: true, maxLength: 1024 });
     config = validateConfiguration({ ...config, username, password, passwordConfirmation });
@@ -207,9 +213,12 @@ async function runSetup({ directory = path.join(__dirname, ".."), argv = process
   if (existing.GUILD_ID !== config.guildId) updates.GUILD_ID = config.guildId;
   const merged = mergeEnv(original || "", updates);
   // An overlapping setup must not silently overwrite settings entered meanwhile.
-  if (readOptional(envPath) !== original || readOptional(adminPath) !== originalAdmin) fail("Konfiguracja zmieniła się w innym procesie. Uruchom konfigurację ponownie; nie nadpisano zmian.");
+  if (readOptional(envPath) !== original || readOptional(usersPath) !== originalUsers || (!authStore && readOptional(legacyAdminPath) !== originalAdmin)) fail("Konfiguracja zmieniła się w innym procesie. Uruchom konfigurację ponownie; nie nadpisano zmian.");
   if (merged !== original) writePrivate(envPath, merged); else fs.chmodSync(envPath, 0o600);
-  if (newAdmin) writePrivate(adminPath, newAdmin); else fs.chmodSync(adminPath, 0o600);
+  if (newAdmin) {
+    if (authStore) authStore.upsertAdminHash(JSON.parse(newAdmin));
+    else writePrivate(legacyAdminPath, newAdmin);
+  } else fs.chmodSync(adminPath, 0o600);
   output.write("Konfiguracja zapisana. Uruchom bota i panel: npm run dev\n");
   return { envPath, adminPath, adminCreated: Boolean(newAdmin) };
 }

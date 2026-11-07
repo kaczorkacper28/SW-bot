@@ -49,6 +49,7 @@
   }
   const rankNames = ["Rekrut", "Szeregowy", "Starszy szeregowy", "Kapral", "Starszy kapral", "Plutonowy", "Sierżant", "Starszy sierżant", "Sierżant sztabowy", "Chorąży", "Starszy chorąży", "Chorąży sztabowy", "Podporucznik", "Porucznik", "Kapitan", "Major", "Podpułkownik", "Pułkownik", "Generał", "Generał inspektor"];
   const statuses = ["nowy", "w toku", "zatwierdzony", "odrzucony", "zamknięty"];
+  const roleLabels = {admin:"Administrator",operator:"Operator",viewer:"Podgląd"};
   const actionLabels = {create:"Dodano wpis",update:"Zaktualizowano wpis",remove:"Usunięto wpis",delete:"Usunięto wpis",discord:"Aktywność Discord",publish:"Opublikowano na Discordzie","publish-pending":"Rozpoczęto publikację","publish-uncertain":"Sprawdź wynik publikacji na Discordzie"};
   const sections = {szefostwo: "Szefostwo", pracownicy: "Pracownicy SW", rekruci: "Rekruci"};
   const resources = {
@@ -107,6 +108,7 @@
       {key:"reason",label:"Powód wypłaty",required:true,type:"textarea",max:1000,full:true},
     ]},
     audit: {label:"Dziennik operacji",icon:"activity",description:"Historia operacji zarejestrowanych przez system.",readonly:true},
+    users: {label:"Użytkownicy",icon:"shield",description:"Konta służbowe i uprawnienia dostępu do panelu.",adminOnly:true},
   };
   let snapshot = null;
   let currentView = "overview";
@@ -117,6 +119,13 @@
   let pendingDelete = null;
   let pendingPublish = null;
   let lastRefresh = null;
+  let account = {id:null,username:"",role:"viewer"};
+  let users = null;
+  let usersLoading = false;
+  let usersError = "";
+  const canWrite = () => authenticated && ["admin","operator"].includes(account.role);
+  const isAdmin = () => authenticated && account.role === "admin";
+  const dialogsOpen = () => ["#record-dialog","#confirm-dialog","#publish-dialog"].some(selector => $(selector).open);
   const dateFormat = new Intl.DateTimeFormat("pl-PL", {timeZone:"Europe/Warsaw",day:"numeric",month:"long",year:"numeric"});
   const timeFormat = new Intl.DateTimeFormat("pl-PL", {timeZone:"Europe/Warsaw",hour:"2-digit",minute:"2-digit"});
   function formatDate(value) {
@@ -139,7 +148,8 @@
     return collection("audit").slice().sort((a,b) => String(b.createdAt || b.timestamp || b.at || "").localeCompare(String(a.createdAt || a.timestamp || a.at || "")));
   }
   function toast(message, isError = false) {
-    const node = el("div", "toast" + (isError ? " error" : ""), message);
+    const node = el("div", "toast" + (isError === "warning" ? " warning" : isError ? " error" : ""), message);
+    while ($("#toasts").children.length >= 2) $("#toasts").firstElementChild.remove();
     $("#toasts").append(node);
     setTimeout(() => node.remove(), 5500);
   }
@@ -155,32 +165,41 @@
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        if (response.status === 401 && path !== "/api/login") showLogin();
-        throw new Error(typeof data.error === "string" ? data.error : "Nie udało się wykonać operacji (" + response.status + ").");
+        if (response.status === 401 && path !== "/api/login") showLogin("Sesja wygasła lub uprawnienia konta zostały zmienione. Zaloguj się ponownie.");
+        const error = new Error(typeof data.error === "string" ? data.error : response.status === 403 ? "Twoje konto nie ma uprawnień do tej operacji." : "Nie udało się wykonać operacji (" + response.status + ").");
+        error.status = response.status;
+        throw error;
       }
       return data;
     } finally {
       clearTimeout(timeoutId);
     }
   }
-  function showLogin() {
+  function showLogin(message = "") {
     authenticated = false;
     snapshot = null;
+    users = null;
+    usersError = "";
+    account = {id:null,username:"",role:"viewer"};
     $("#app").classList.add("hidden");
     $("#login-screen").classList.remove("hidden");
+    $("#password").value = "";
+    $("#login-error").textContent = message;
     if ($("#record-dialog").open) $("#record-dialog").close();
     if ($("#confirm-dialog").open) $("#confirm-dialog").close();
     if ($("#publish-dialog").open) $("#publish-dialog").close();
   }
-  async function showApp(username) {
+  async function showApp(session) {
     authenticated = true;
+    account = {id:session.id || null,username:session.username || "Użytkownik",role:roleLabels[session.role] ? session.role : "viewer"};
     $("#login-screen").classList.add("hidden");
     $("#app").classList.remove("hidden");
-    $("#admin-name").textContent = username || "Administrator";
-    const initials = (username || "AD").slice(0,2).toUpperCase();
+    $("#admin-name").textContent = account.username;
+    $("#session-role").textContent = roleLabels[account.role];
+    const initials = account.username.slice(0,2).toUpperCase();
     $(".sidebar-user .avatar").textContent = initials;
     currentView = location.hash.slice(1);
-    if (currentView !== "overview" && !resources[currentView]) currentView = "overview";
+    if (currentView !== "overview" && (!resources[currentView] || (resources[currentView].adminOnly && !isAdmin()))) currentView = "overview";
     renderNavigation();
     $("#main").replaceChildren(el("div","loading","Pobieranie danych jednostki…"));
     await refresh();
@@ -199,12 +218,14 @@
     loading = true;
     $("#refresh").disabled = true;
     try {
+      if (currentView === "users") await loadUsers(silent);
+      if (!authenticated) return;
       snapshot = await api("/api/state");
       lastRefresh = new Date();
       setConnection();
       $("#last-updated").textContent = "Aktualizacja: " + timeFormat.format(lastRefresh);
       renderNavigation();
-      if (!$("#record-dialog").open && !$("#confirm-dialog").open && !$("#publish-dialog").open) {
+      if (!dialogsOpen()) {
         const searchFocused = document.activeElement?.id === "records-search";
         const selectionStart = searchFocused ? document.activeElement.selectionStart : null;
         const selectionEnd = searchFocused ? document.activeElement.selectionEnd : null;
@@ -217,7 +238,7 @@
     } catch (error) {
       setConnection(true);
       if (!silent) toast(error.message, true);
-      if (!snapshot && authenticated) {
+      if (!snapshot && authenticated && currentView !== "users") {
         const card = el("div", "error-card");
         card.append(el("strong", "", "Nie można pobrać danych bota"), el("p", "", error.message),button("Spróbuj ponownie", "button secondary", () => refresh(), "refresh"));
         $("#main").replaceChildren(card);
@@ -229,6 +250,7 @@
   }
   function navigate(view) {
     if (view !== "overview" && !resources[view]) return;
+    if (resources[view]?.adminOnly && !isAdmin()) {toast("Zarządzanie użytkownikami jest dostępne tylko dla administratora.",true);return;}
     currentView = view;
     search = "";
     if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
@@ -236,13 +258,15 @@
     $("#sidebar-overlay").classList.add("hidden");
     $("#menu-toggle").setAttribute("aria-expanded", "false");
     renderNavigation();
-    if (snapshot) render();
+    if (view === "users") {render();loadUsers();}
+    else if (snapshot) render();
   }
   function renderNavigation() {
     const navigation = $("#navigation");
     navigation.replaceChildren();
     const entries = [["overview", {label:"Pulpit",icon:"grid"}], ...Object.entries(resources)];
     for (const [key, meta] of entries) {
+      if (meta.adminOnly && !isAdmin()) continue;
       const link = el("a", "nav-item" + (currentView === key ? " active" : ""));
       link.href = "#" + key;
       if (currentView === key) link.setAttribute("aria-current", "page");
@@ -296,13 +320,156 @@
   function render() {
     $("#breadcrumb-view").textContent = currentView === "overview" ? "Pulpit" : resources[currentView].label;
     document.title = (currentView === "overview" ? "Pulpit" : resources[currentView].label) + " — SW Centrum";
-    if (currentView === "overview") renderOverview(); else renderResource();
+    if (currentView === "users") renderUsers();
+    else if (currentView === "overview") renderOverview(); else renderResource();
+  }
+  async function loadUsers(silent = false) {
+    if (!isAdmin() || usersLoading) return;
+    const searchFocused = document.activeElement?.id === "records-search";
+    const selectionStart = searchFocused ? document.activeElement.selectionStart : null;
+    const selectionEnd = searchFocused ? document.activeElement.selectionEnd : null;
+    usersLoading = true;
+    usersError = "";
+    if (!users && currentView === "users" && !dialogsOpen()) renderUsers();
+    try {
+      const response = await api("/api/users");
+      if (!Array.isArray(response.users)) throw new Error("Serwer nie zwrócił listy użytkowników.");
+      users = response.users.slice().sort((a,b) => String(a.username).localeCompare(String(b.username),"pl"));
+      $("#last-updated").textContent = "Aktualizacja: " + timeFormat.format(new Date());
+    } catch (error) {
+      usersError = error.message;
+      if (!silent && authenticated) toast(error.message,true);
+    } finally {
+      usersLoading = false;
+      if (authenticated && isAdmin() && currentView === "users" && !dialogsOpen()) {
+        renderUsers();
+        if (searchFocused && $("#records-search")) {
+          $("#records-search").focus();
+          try {$("#records-search").setSelectionRange(selectionStart,selectionEnd);} catch { /* Search input selection is browser dependent. */ }
+        }
+      }
+    }
+  }
+  function renderUsers() {
+    if (!isAdmin()) return;
+    const main = $("#main");
+    main.replaceChildren(heading("Użytkownicy","Przydziel dostęp do panelu poszczególnym osobom.",[
+      button("Utwórz konto","button primary",() => openAccountForm("create"),"plus")
+    ]));
+    const roles = el("div","account-roles");
+    for (const [role,description] of [["admin","Zarządza kontami i wszystkimi modułami."],["operator","Dodaje, edytuje i publikuje wpisy służbowe."],["viewer","Przegląda dane bez możliwości ich zmiany."]]) {
+      const card = el("div","account-role-card");card.append(el("strong","",roleLabels[role]),el("p","",description));roles.append(card);
+    }
+    main.append(roles,el("div","intro-strip","Konta tworzy administrator. Każda osoba loguje się własną nazwą użytkownika i hasłem. Wyłączenie konta lub zmiana hasła kończy jego aktywne sesje."));
+    const filters = el("div","filter-bar");
+    const searchBox = el("label","search-box");searchBox.append(icon("search"));
+    const input = el("input");input.id="records-search";input.type="search";input.placeholder="Szukaj użytkownika…";input.setAttribute("aria-label","Szukaj użytkownika");input.value=search;
+    input.addEventListener("input",()=>{search=input.value;renderUsersList();});searchBox.append(input);
+    filters.append(searchBox,el("span","filter-label",(users?.length ?? 0)+" kont"));main.append(filters);
+    main.append(el("p","mobile-table-hint","Przesuń tabelę w bok, aby zobaczyć datę i działania konta."));
+    const content = el("section","panel-card");content.id="users-area";main.append(content);renderUsersList();
+  }
+  function renderUsersList() {
+    const area = $("#users-area");if (!area) return;
+    area.replaceChildren();
+    if (usersError) {
+      const error = el("div","empty-state");error.append(el("strong","","Nie udało się pobrać kont"),el("p","",usersError),button("Spróbuj ponownie","button secondary small",()=>loadUsers(),"refresh"));area.append(error);return;
+    }
+    if (!users && usersLoading) {area.append(el("div","loading","Pobieranie kont użytkowników…"));return;}
+    const query = search.toLocaleLowerCase("pl-PL").trim();
+    const rows = (users || []).filter(user => [user.username,roleLabels[user.role],user.active ? "aktywne" : "wyłączone"].join(" ").toLocaleLowerCase("pl-PL").includes(query));
+    if (!rows.length) {area.append(emptyState("users","Brak wyników","Zmień frazę wyszukiwania lub utwórz konto."));return;}
+    const scroll = el("div","table-scroll");const table = el("table");const head = el("thead");const titles = el("tr");
+    for (const title of ["UŻYTKOWNIK","UPRAWNIENIA","STATUS","UTWORZONO","AKCJE"]) {const th=el("th","",title);th.scope="col";titles.append(th);}head.append(titles);table.append(head);
+    const body = el("tbody");
+    for (const user of rows) {
+      const self = user.id === account.id || user.username === account.username;
+      const tr = el("tr");
+      const cells = [personCell(user.username,self?"Twoje konto":"Konto służbowe"),el("span","badge"+(user.role==="admin"?" purple":""),roleLabels[user.role]||user.role),el("span","badge "+(user.active?"green":"gray"),user.active?"Aktywne":"Wyłączone"),textCell(formatDate(user.createdAt))];
+      for (const cell of cells) {const td=el("td");td.append(cell);tr.append(td);}
+      const td = el("td");const actions = el("div","action-cell");
+      const edit = button("","icon-button",()=>openAccountForm("edit",user),"edit");edit.title="Zmień uprawnienia";edit.setAttribute("aria-label","Zmień uprawnienia: "+user.username);
+      const reset = button("","icon-button",()=>openAccountForm("password",user),"shield");reset.title="Ustaw nowe hasło";reset.setAttribute("aria-label","Ustaw nowe hasło: "+user.username);
+      const toggle = button("","icon-button",()=>confirmAccountAction(user,"toggle"),"lock");toggle.title=self?"Nie możesz wyłączyć własnego konta":user.active?"Wyłącz konto":"Włącz konto";toggle.setAttribute("aria-label",(user.active?"Wyłącz konto: ":"Włącz konto: ")+user.username);toggle.disabled=self;
+      const remove = button("","icon-button",()=>confirmAccountAction(user,"delete"),"trash");remove.title=self?"Nie możesz usunąć własnego konta":"Usuń konto";remove.setAttribute("aria-label","Usuń konto: "+user.username);remove.disabled=self;
+      actions.append(edit,reset,toggle,remove);td.append(actions);tr.append(td);body.append(tr);
+    }
+    table.append(body);scroll.append(table);area.append(scroll);
+  }
+  function openAccountForm(mode, user = null) {
+    if (!isAdmin()) {toast("Ta operacja wymaga konta administratora.",true);return;}
+    activeForm = {name:"users",mode,record:user};
+    $("#dialog-title").textContent = mode === "create" ? "Utwórz konto użytkownika" : mode === "password" ? "Ustaw nowe hasło" : "Zmień uprawnienia";
+    $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent=mode==="create"?"Utwórz konto":mode==="password"?"Zmień hasło":"Zapisz zmiany";
+    const fields = $("#dialog-fields");fields.replaceChildren();
+    if (user) fields.append(el("div","account-form-note field full","Konto: "+user.username));
+    function field(key,label,type,options={}) {
+      const wrapper=el("div","field full"+(type==="checkbox"?" checkbox":""));const caption=el("label","",label);caption.htmlFor="account-"+key;
+      const input=el(type==="select"?"select":"input");input.id="account-"+key;input.name=key;
+      if(type==="select") for(const [value,title] of Object.entries(roleLabels)){const option=el("option","",title);option.value=value;input.append(option);}
+      else input.type=type;
+      if(options.required)input.required=true;
+      if(options.minLength)input.minLength=options.minLength;
+      if(options.maxLength)input.maxLength=options.maxLength;
+      if(type==="password")input.autocomplete="new-password";
+      if(type==="checkbox"){input.checked=options.value!==false;caption.prepend(input);wrapper.append(caption);}else{if(options.value!==undefined)input.value=options.value;wrapper.append(caption,input);}
+      if(options.help)wrapper.append(el("small","",options.help));
+      if(options.disabled)input.disabled=true;
+      fields.append(wrapper);return input;
+    }
+    if (mode === "create") {
+      const username=field("username","Nazwa użytkownika *","text",{required:true,minLength:3,maxLength:64,help:"3–64 znaki: litery bez polskich znaków, cyfry oraz . _ @ -"});
+      username.pattern="[A-Za-z0-9_.@\\-]{3,64}";username.autocomplete="off";
+    }
+    if (mode === "create" || mode === "password") {
+      field("password","Nowe hasło *","password",{required:true,minLength:12,maxLength:1024,help:"Co najmniej 12 znaków. Hasło nie będzie później wyświetlane."});
+      field("passwordConfirm","Powtórz hasło *","password",{required:true,minLength:12,maxLength:1024});
+    }
+    if (mode !== "password") {
+      field("role","Uprawnienia","select",{value:user?.role||"operator"});
+      const self = user && (user.id===account.id || user.username===account.username);
+      field("active","Konto aktywne","checkbox",{value:user?.active??true,disabled:self,help:self?"Własnego konta nie można wyłączyć.":"Wyłączone konto nie może się zalogować."});
+    } else fields.append(el("div","account-form-note field full","Zmiana hasła wyloguje wszystkie aktywne sesje tego konta."));
+    $("#record-dialog").showModal();
+  }
+  async function saveAccountForm() {
+    if (!isAdmin() || !activeForm || activeForm.name!=="users") return;
+    const {mode,record:user}=activeForm;
+    const body={};
+    if (mode === "create") body.username=$("#account-username").value.trim();
+    if (mode === "create" || mode === "password") {
+      body.password=$("#account-password").value;
+      if (body.password.length<12) {$("#record-error").textContent="Hasło musi mieć co najmniej 12 znaków.";return;}
+      if (body.password!==$("#account-passwordConfirm").value) {$("#record-error").textContent="Wpisane hasła muszą być takie same.";return;}
+    }
+    if (mode!=="password") {body.role=$("#account-role").value;body.active=$("#account-active").checked;}
+    const submit=$("#record-submit");submit.disabled=true;submit.textContent="Zapisywanie…";$("#record-error").textContent="";
+    try {
+      await api("/api/users"+(user?"/"+encodeURIComponent(user.id):""),{method:mode==="create"?"POST":"PATCH",body:JSON.stringify(body)});
+      $("#record-dialog").close();
+      if (user && (user.id===account.id || user.username===account.username) && (mode==="password" || body.role!==account.role)) {
+        showLogin("Dane Twojego konta zostały zmienione. Zaloguj się ponownie.");return;
+      }
+      toast(mode==="create"?"Utworzono konto użytkownika.":mode==="password"?"Zmieniono hasło i zakończono aktywne sesje tego konta.":"Zapisano uprawnienia użytkownika.");
+      await loadUsers();
+    } catch (error) {$("#record-error").textContent=error.message;}
+    finally {submit.disabled=false;submit.textContent="Zapisz zmiany";}
+  }
+  function confirmAccountAction(user, action) {
+    if (!isAdmin()) return;
+    pendingDelete={name:"users",record:user,action};
+    const verb = action==="delete"?"Usunąć":user.active?"Wyłączyć":"Włączyć";
+    $("#confirm-dialog h2").textContent=verb+" konto?";
+    $("#confirm-description").textContent=action==="delete"?"Konto „"+user.username+"” zostanie usunięte. Jego aktywne sesje zostaną zakończone.":user.active?"Konto „"+user.username+"” straci dostęp do panelu. Aktywne sesje zostaną zakończone.":"Konto „"+user.username+"” ponownie uzyska dostęp do panelu.";
+    $("#confirm-delete").textContent=action==="delete"?"Usuń konto":user.active?"Wyłącz konto":"Włącz konto";
+    $("#confirm-delete").disabled=false;$("#confirm-dialog").showModal();
   }
   function renderOverview() {
     const main = $("#main");
-    main.replaceChildren(heading("Pulpit dowodzenia", "Bieżący obraz jednostki. Wszystko, czego potrzebujesz do służby.",[
-      button("Odśwież", "button secondary", () => refresh(),"refresh"),button("Dodaj funkcjonariusza", "button primary", () => openForm("members"),"plus")
-    ]));
+    const actions = [button("Odśwież", "button secondary", () => refresh(),"refresh")];
+    if (canWrite()) actions.push(button("Dodaj funkcjonariusza", "button primary", () => openForm("members"),"plus"));
+    main.replaceChildren(heading("Pulpit dowodzenia", "Bieżący obraz jednostki. Wszystko, czego potrzebujesz do służby.",actions));
+    if (!canWrite()) main.append(el("div","intro-strip","Twoje konto ma dostęp do podglądu. Możesz przeglądać ewidencję i dziennik operacji."));
     if (snapshot.status?.online !== true) {
       const strip = el("div","intro-strip warning");
       strip.append(icon("info"),el("span","","Tryb lokalny — ewidencja jest dostępna. Funkcje wysyłające wiadomości i wypłaty na Discordzie wymagają połączenia bota."));
@@ -323,13 +490,13 @@
     const activity = el("section","panel-card");
     activity.append(cardHeader("Ostatnia aktywność","Bieżące wpisy w dzienniku operacji",button("Cały dziennik →","text-link",() => navigate("audit"))));
     const events = recentEvents().slice(0,5);
-    if (!events.length) activity.append(emptyState("activity","Dziennik jest jeszcze pusty","Dodaj pierwszy wpis. Operacje w panelu będą widoczne w tym miejscu."));
+    if (!events.length) activity.append(emptyState("activity","Dziennik jest jeszcze pusty","Zarejestrowane operacje będą widoczne w tym miejscu."));
     else for (const event of events) activity.append(activityRow(event));
     left.append(activity);
     const recent = el("section","panel-card recent-table");
     recent.append(cardHeader("Kadra jednostki","Ostatnio dodani funkcjonariusze",button("Zobacz wszystkich →","text-link",() => navigate("members"))));
     const members = collection("members").slice().sort((a,b) => String(b.joinedAt || "").localeCompare(String(a.joinedAt || ""))).slice(0,5);
-    if (!members.length) recent.append(emptyState("users","Brak funkcjonariuszy","Dodaj kadrę z panelu lub komendą /sw-dodaj na Discordzie.",button("Dodaj funkcjonariusza","button secondary small",() => openForm("members"),"plus")));
+    if (!members.length) recent.append(emptyState("users","Brak funkcjonariuszy","W ewidencji nie ma jeszcze funkcjonariuszy.",canWrite()?button("Dodaj funkcjonariusza","button secondary small",() => openForm("members"),"plus"):null));
     else recent.append(buildTable("members",members,true));
     left.append(recent);
     const right = el("div","side-stack");
@@ -347,11 +514,11 @@
     }
     system.append(moduleList);right.append(system);
     const quick = el("section","panel-card");
-    quick.append(cardHeader("Szybkie działania"));
+    quick.append(cardHeader(canWrite()?"Szybkie działania":"Szybki dostęp"));
     const links = el("div","quick-links");
     for (const [name,label] of [["prisoners","Dodaj osadzonego"],["reports","Nowy raport"],["calls","Dodaj wezwanie"],["documents","Nowy dokument"]]) {
-      const link = button("","quick-link",() => openForm(name));
-      link.append(icon(resources[name].icon),el("span","",label));links.append(link);
+      const link = button("","quick-link",() => canWrite()?openForm(name):navigate(name));
+      link.append(icon(resources[name].icon),el("span","",canWrite()?label:resources[name].label));links.append(link);
     }
     quick.append(links);right.append(quick);
     grid.append(left,right);main.append(grid);
@@ -371,17 +538,20 @@
   }
   function renderResource() {
     const resource = resources[currentView];
-    const actions = resource.readonly ? [] : [button("Dodaj wpis","button primary",() => openForm(currentView),"plus")];
+    const actions = resource.readonly || !canWrite() ? [] : [button("Dodaj wpis","button primary",() => openForm(currentView),"plus")];
     const main = $("#main");main.replaceChildren(heading(resource.label,resource.description,actions));
     if (resource.notice) main.append(el("div","notice",resource.notice));
-    if (["reports","calls","proposals"].includes(currentView)) main.append(el("div","intro-strip","Zapis formularza tworzy wpis w ewidencji. Aby opublikować go na Discordzie, użyj przycisku wysyłki przy wpisie. Bot musi być połączony."));
+    if (!canWrite()) main.append(el("div","intro-strip","Dostęp do podglądu — edycję wpisów wykonuje operator lub administrator."));
+    if (["reports","calls","proposals"].includes(currentView)) main.append(el("div","intro-strip",canWrite()?"Zapis formularza tworzy wpis w ewidencji. Aby opublikować go na Discordzie, użyj przycisku wysyłki przy wpisie. Bot musi być połączony.":"Publikacją wpisów na Discordzie zajmuje się operator lub administrator. Stan publikacji jest widoczny w ewidencji."));
     if (currentView === "documents") main.append(el("div","intro-strip","Dokumenty z panelu trafiają do ewidencji. Formularze i tickety Discord obsługuje ten sam bot komendą /setup-dokumenty."));
+    if (currentView === "prisoners") main.append(el("div","intro-strip","Dodanie, edycja i usunięcie osadzonego zapisuje ewidencję oraz zleca automatyczne powiadomienie Discord. Stan wysyłki jest widoczny przy wpisie i w historii poniżej."));
     const filters = el("div","filter-bar");
     const searchBox = el("label","search-box");searchBox.append(icon("search"));
     const input = el("input");input.id="records-search";input.type="search";input.placeholder="Szukaj w ewidencji…";input.setAttribute("aria-label","Szukaj w ewidencji");input.value=search;
     input.addEventListener("input",() => {search=input.value;renderRecords();});searchBox.append(input);
     filters.append(searchBox,el("span","filter-label",collection(currentView).length + " wpisów w ewidencji"));main.append(filters);
     const tableArea = el("section","panel-card");tableArea.id="records-area";main.append(tableArea);renderRecords();
+    if (currentView === "prisoners") main.append(renderNotifications());
   }
   function renderRecords() {
     const node = $("#records-area");if (!node) return;
@@ -390,7 +560,7 @@
     if (currentView === "audit") records = recentEvents().filter(record => !query || Object.values(record).join(" ").toLocaleLowerCase("pl-PL").includes(query));
     node.replaceChildren();
     if (!records.length) {
-      node.append(emptyState(resources[currentView].icon,query?"Brak wyników":"Ewidencja jest pusta",query?"Zmień frazę wyszukiwania, aby znaleźć wpis.":"Nowe wpisy pojawią się tutaj po zapisaniu danych.",!query && !resources[currentView].readonly ? button("Dodaj pierwszy wpis","button secondary small",() => openForm(currentView),"plus"):null));
+      node.append(emptyState(resources[currentView].icon,query?"Brak wyników":"Ewidencja jest pusta",query?"Zmień frazę wyszukiwania, aby znaleźć wpis.":"Nowe wpisy pojawią się tutaj po zapisaniu danych.",!query && !resources[currentView].readonly && canWrite() ? button("Dodaj pierwszy wpis","button secondary small",() => openForm(currentView),"plus"):null));
     } else node.append(buildTable(currentView,records));
   }
   function personCell(name, id) {
@@ -407,9 +577,9 @@
   function titleCell(title,detail) {const node=el("div","record-detail");node.append(el("strong","record-title",title || "Bez tytułu"));if(detail)node.append(el("span","",String(detail).slice(0,230)));return node;}
   function buildTable(name,records,compact=false) {
     const wrapper=el("div","table-scroll");const table=el("table");
-    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","AKCJE"],reports:["RAPORT","AUTOR","STATUS","DATA","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS","DATA","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS","DATA","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
+    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","DISCORD","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","AKCJE"],reports:["RAPORT","AUTOR","STATUS","DATA","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS","DATA","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS","DATA","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
     const head=el("thead");const row=el("tr");
-    const labels=compact?headings[name].slice(0,3):headings[name];
+    const labels=compact?headings[name].slice(0,3):headings[name].filter(label => label !== "AKCJE" || canWrite());
     for(const label of labels){const th=el("th","",label);th.scope="col";row.append(th);}head.append(row);table.append(head);
     const body=el("tbody");
     for(const record of records){
@@ -417,7 +587,7 @@
       if(name==="members")cells=[personCell(record.name || "Funkcjonariusz SW",record.userId || record.id),textCell("SW-"+String(record.number || "?").padStart(2,"0")),badge(record.rank || "Rekrut"),textCell("+"+(record.plus||0)+" / −"+(record.minus||0)+" · Nagany: "+(record.reprimands||0))];
       if(name==="prisoners"){
         const seconds=Number(record.remainingSeconds||0);const minutes=Math.max(0,Math.ceil(seconds/60));
-        cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min")];
+        cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min"),notificationBadge(notifications().find(item=>String(item.recordId)===String(record.id)))];
       }
       if(name==="ranks")cells=[textCell(record.userId||record.id),badge(sections[record.section]||record.section),textCell((record.section==="rekruci"?"SWRO":"SW-")+String(record.number||"?").padStart(2,"0"))];
       if(["reports","documents","proposals"].includes(name))cells=[titleCell(record.title||resources[name].label,record.content || fieldDescription(record.fields)),textCell(name==="documents"?(record.kind||record.type):(record.author||record.authorId)),publicationStatus(record),textCell(formatDate(record.createdAt))];
@@ -425,7 +595,7 @@
       if(name==="payouts")cells=[textCell(record.recipient||record.userId),textCell(Number(record.amount||0).toLocaleString("pl-PL",{style:"currency",currency:"PLN"})),titleCell(record.reason||record.content,(record.paid===true||record.status==="wypłacona")?"Wypłata potwierdzona przez bota":"Ewidencja — bez przelewu"),badge(record.status)];
       if(name==="audit")cells=[titleCell(record.title||record.message||actionLabels[record.action]||record.action,record.recordId||record.targetId),textCell(resources[record.resource]?.label||record.resource||record.type),textCell(record.actor||record.username||"System"),textCell(formatDate(record.createdAt||record.timestamp||record.at))];
       const tr=el("tr");for(const node of compact?cells.slice(0,3):cells){const td=el("td");td.append(node);tr.append(td);}
-      if(!compact&&!resources[name].readonly){
+      if(!compact&&!resources[name].readonly&&canWrite()){
         const td=el("td");const actions=el("div","action-cell");
         const edit=button("","icon-button",()=>openForm(name,record),"edit");edit.title="Edytuj wpis";edit.setAttribute("aria-label","Edytuj wpis "+(record.title||record.name||record.imie||record.id));
         const remove=button("","icon-button",()=>confirmRemove(name,record),"trash");remove.title="Usuń wpis";remove.setAttribute("aria-label","Usuń wpis "+(record.title||record.name||record.imie||record.id));
@@ -454,7 +624,43 @@
     else if (record.publishState === "uncertain") node.append(el("small","published-note uncertain","Sprawdź kanał Discord"));
     return node;
   }
+  function notifications() {
+    return (Array.isArray(snapshot?.notifications)?snapshot.notifications:[]).slice().sort((a,b)=>String(b.createdAt||"").localeCompare(String(a.createdAt||"")));
+  }
+  function notificationBadge(notification) {
+    const labels={sent:"Wysłano",pending:"Oczekuje",failed:"Wymaga uwagi"};
+    const node=el("span","badge "+(notification?.status==="sent"?"green":notification?.status==="failed"?"red":notification?.status==="pending"?"gold":"gray"),labels[notification?.status]||"Brak informacji");
+    if(notification?.message)node.title=notification.message;
+    return node;
+  }
+  function renderNotifications() {
+    const card=el("section","panel-card recent-table");
+    card.append(cardHeader("Powiadomienia Discord","Ostatnie 10 powiadomień o zmianach osadzonych"));
+    const rows=notifications().slice(0,10);
+    if(!rows.length){card.append(emptyState("activity","Brak powiadomień","Po zmianie danych osadzonego pojawi się tu potwierdzony stan wysyłki."));return card;}
+    const labels={create:"Dodanie osadzonego",update:"Edycja osadzonego",remove:"Usunięcie osadzonego",delete:"Usunięcie osadzonego"};
+    for(const entry of rows){
+      const row=el("div","notification-row");const copy=el("div","notification-copy");
+      copy.append(el("strong","",(labels[entry.action]||"Zmiana osadzonego")+(entry.recordId?" · "+entry.recordId:"")),el("p","",entry.message||"Oczekiwanie na informację o wysyłce."),el("small","",formatDate(entry.createdAt)));
+      const actions=el("div","notification-actions");actions.append(notificationBadge(entry));
+      if(isAdmin()&&entry.status!=="sent"&&entry.canRetry){
+        const retry=button("Ponów wysyłkę","button secondary small",async()=>{
+          retry.disabled=true;
+          try{const result=await api("/api/notifications/"+encodeURIComponent(entry.id)+"/retry",{method:"POST",body:"{}"});showNotificationOutcome("Ponowiono zlecenie wysyłki.",result.notification);await refresh();}
+          catch(error){toast(error.message,true);}finally{retry.disabled=false;}
+        },"refresh");actions.append(retry);
+      }
+      row.append(copy,actions);card.append(row);
+    }
+    return card;
+  }
+  function showNotificationOutcome(savedMessage,notification) {
+    if(notification && ["sent","pending","failed"].includes(notification.status)) {
+      toast(savedMessage+" "+notification.message,notification.status==="sent"?false:"warning");
+    } else toast(savedMessage+" Stan powiadomienia Discord nie jest dostępny.","warning");
+  }
   function openForm(name,record=null){
+    if (!canWrite()) {toast("Twoje konto ma dostęp tylko do podglądu.",true);return;}
     const resource=resources[name];if(!resource || resource.readonly)return;
     activeForm={name,record};
     $("#dialog-title").textContent=(record?"Edytuj ":"Dodaj ")+resource.singular;
@@ -496,6 +702,8 @@
   }
   async function saveForm(event){
     event.preventDefault();if(!activeForm)return;
+    if(activeForm.name==="users"){await saveAccountForm();return;}
+    if(!canWrite()){toast("Twoje konto nie ma uprawnień do zmiany danych.",true);return;}
     const {name,record}=activeForm;
     const body={};
     for(const field of resources[name].fields){
@@ -507,13 +715,17 @@
     }
     const submit=$("#record-submit");submit.disabled=true;submit.textContent="Zapisywanie…";$("#record-error").textContent="";
     try{
-      await api("/api/"+name+(record?"/"+encodeURIComponent(record.id||record.userId):""),{method:record?"PATCH":"POST",body:JSON.stringify(body)});
-      $("#record-dialog").close();toast(name==="payouts"?"Zapisano wpis w ewidencji. Pieniądze nie zostały wysłane.":"Zapisano wpis w ewidencji.");
+      const result=await api("/api/"+name+(record?"/"+encodeURIComponent(record.id||record.userId):""),{method:record?"PATCH":"POST",body:JSON.stringify(body)});
+      $("#record-dialog").close();
+      if(name==="prisoners")showNotificationOutcome("Zapisano osadzonego w ewidencji.",result.notification);
+      else toast(name==="payouts"?"Zapisano wpis w ewidencji. Pieniądze nie zostały wysłane.":"Zapisano wpis w ewidencji.");
       await refresh();
     }catch(error){$("#record-error").textContent=error.message;}finally{submit.disabled=false;submit.textContent="Zapisz wpis";}
   }
   function confirmRemove(name,record){
+    if(!canWrite())return;
     pendingDelete={name,record};
+    $("#confirm-dialog h2").textContent="Usunąć ten wpis?";$("#confirm-delete").textContent="Usuń wpis";
     const title=record.title||record.name||record.imie||record.recipient||record.userId||record.id;
     $("#confirm-description").textContent="Wpis „"+title+"” zostanie trwale usunięty z ewidencji. Operacja zostanie zapisana w dzienniku.";
     $("#confirm-delete").disabled=false;$("#confirm-dialog").showModal();
@@ -521,11 +733,22 @@
   async function removeRecord(){
     if(!pendingDelete)return;const {name,record}=pendingDelete;$("#confirm-delete").disabled=true;
     try{
-      await api("/api/"+name+"/"+encodeURIComponent(record.id||record.userId),{method:"DELETE",body:"{}"});
-      $("#confirm-dialog").close();toast("Usunięto wpis z ewidencji.");await refresh();
+      if(name==="users"){
+        if(!isAdmin())throw new Error("Ta operacja wymaga konta administratora.");
+        const toggle=pendingDelete.action==="toggle";
+        await api("/api/users/"+encodeURIComponent(record.id),{method:toggle?"PATCH":"DELETE",body:toggle?JSON.stringify({active:!record.active}):"{}"});
+        $("#confirm-dialog").close();toast(toggle?(record.active?"Wyłączono konto i zakończono jego sesje.":"Włączono konto użytkownika."):"Usunięto konto użytkownika.");await loadUsers();
+      }else{
+        if(!canWrite())throw new Error("Twoje konto ma dostęp tylko do podglądu.");
+        const result=await api("/api/"+name+"/"+encodeURIComponent(record.id||record.userId),{method:"DELETE",body:"{}"});
+        $("#confirm-dialog").close();
+        if(name==="prisoners")showNotificationOutcome("Usunięto osadzonego z ewidencji.",result.notification);else toast("Usunięto wpis z ewidencji.");
+        await refresh();
+      }
     }catch(error){toast(error.message,true);}finally{$("#confirm-delete").disabled=false;}
   }
   function confirmPublish(name,record) {
+    if(!canWrite())return;
     pendingPublish = {name,record};
     $("#publish-description").textContent = "Do publikacji: „" + (record.title || record.target || record.id) + "”.";
     $("#publish-error").textContent = "";
@@ -533,7 +756,7 @@
     $("#publish-dialog").showModal();
   }
   async function publishRecord() {
-    if (!pendingPublish) return;
+    if (!pendingPublish || !canWrite()) return;
     $("#publish-send").disabled = true;
     $("#publish-send").textContent = "Wysyłanie…";
     $("#publish-error").textContent = "";
@@ -550,7 +773,7 @@
   }
   $("#login-form").addEventListener("submit",async event=>{
     event.preventDefault();const submit=$("#login-form button");submit.disabled=true;$("#login-error").textContent="";
-    try{const data=await api("/api/login",{method:"POST",body:JSON.stringify({username:$("#username").value.trim(),password:$("#password").value})});$("#password").value="";await showApp(data.username||$("#username").value.trim());}
+    try{const data=await api("/api/login",{method:"POST",body:JSON.stringify({username:$("#username").value.trim(),password:$("#password").value})});$("#password").value="";await showApp(data);}
     catch(error){$("#login-error").textContent=error.message;}finally{submit.disabled=false;}
   });
   $("#logout").append(icon("logout"));$("#refresh").append(icon("refresh"));$("#menu-toggle").append(icon("menu"));
@@ -560,10 +783,11 @@
   $("#sidebar-overlay").addEventListener("click",()=>navigate(currentView));
   $("#record-form").addEventListener("submit",saveForm);
   for(const id of ["#dialog-close","#dialog-cancel"])$(id).addEventListener("click",()=>$("#record-dialog").close());
+  $("#record-dialog").addEventListener("close",()=>{for(const input of $("#record-dialog").querySelectorAll('input[type="password"]'))input.value="";activeForm=null;});
   $("#confirm-cancel").addEventListener("click",()=>$("#confirm-dialog").close());$("#confirm-delete").addEventListener("click",removeRecord);
   $("#publish-cancel").addEventListener("click",()=>$("#publish-dialog").close());$("#publish-send").addEventListener("click",publishRecord);
   window.addEventListener("hashchange",()=>{const view=location.hash.slice(1);if(authenticated&&(view==="overview"||resources[view]))navigate(view);});
   function tick(){$("#topbar-date").textContent=dateFormat.format(new Date())+" · "+timeFormat.format(new Date());}tick();setInterval(tick,30000);
-  setInterval(()=>{if(authenticated&&!document.hidden&&!$("#record-dialog").open&&!$("#confirm-dialog").open&&!$("#publish-dialog").open)refresh(true);},20000);
-  (async()=>{try{const session=await api("/api/session");if(session.authenticated)await showApp(session.username);}catch(error){$("#login-error").textContent=error.message;}})();
+  setInterval(()=>{if(authenticated&&!document.hidden&&!dialogsOpen())refresh(true);},20000);
+  (async()=>{try{const session=await api("/api/session");if(session.authenticated)await showApp(session);}catch(error){$("#login-error").textContent=error.message;}})();
 })();

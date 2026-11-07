@@ -1,14 +1,12 @@
 "use strict";
 
-require("dotenv").config({ quiet: true });
-
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { promisify } = require("node:util");
+const net = require("node:net");
+const { createAuthStore } = require("./auth-store");
 
-const scrypt = promisify(crypto.scrypt);
 const MAX_BODY = 65536;
 const SESSION_AGE = 8 * 60 * 60 * 1000;
 const COOKIE = "sw_panel_session";
@@ -36,6 +34,25 @@ async function readBody(request) {
   });
 }
 
+async function readJson(request) {
+  const body = await readBody(request);
+  let input;
+  try { input = JSON.parse(body.toString("utf8")); }
+  catch { throw Object.assign(new Error("Nieprawidłowy JSON."), { status:400 }); }
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw Object.assign(new Error("Wymagany obiekt JSON."), { status:400 });
+  return input;
+}
+
+function sessionResponse(user) { return { authenticated:true, id:user.id, username:user.username, role:user.role }; }
+
+function rateLimitAddress(request, { publicOrigin, trustCloudflareProxy }) {
+  const address = request.socket.remoteAddress;
+  const loopback = address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  const connectingIp = request.headers["cf-connecting-ip"];
+  if (trustCloudflareProxy && publicOrigin?.startsWith("https://") && loopback && typeof connectingIp === "string" && net.isIP(connectingIp)) return connectingIp;
+  return address;
+}
+
 function createPanelServer(options = {}) {
   const dataDir = options.dataDir || process.env.PANEL_DATA_DIR || process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
   const bridgeDir = options.bridgeDir || process.env.MANAGEMENT_DATA_DIR || process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
@@ -43,7 +60,14 @@ function createPanelServer(options = {}) {
   const bridgePort = options.bridgePort ?? Number(process.env.MANAGEMENT_PORT || 3210);
   const publicOrigin = options.publicOrigin || process.env.PANEL_PUBLIC_ORIGIN || null;
   if (publicOrigin && new URL(publicOrigin).origin !== publicOrigin) throw new Error("PANEL_PUBLIC_ORIGIN musi zawierać sam origin, bez ścieżki.");
+  if (publicOrigin) {
+    const parsed = new URL(publicOrigin);
+    const loopback = ["localhost","127.0.0.1","[::1]"].includes(parsed.hostname);
+    if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) throw new Error("Publiczny panel wymaga adresu HTTPS. HTTP jest dozwolone wyłącznie dla localhost lub 127.0.0.1.");
+  }
   const sessions = new Map();
+  const auth = createAuthStore({ dataDir });
+  const trustCloudflareProxy = options.trustCloudflareProxy ?? process.env.PANEL_TRUST_CLOUDFLARE === "1";
   const attempts = new Map();
   const mutation = new RegExp(`^/api/(${RESOURCES})(?:/[^/]+)?$`);
 
@@ -70,33 +94,34 @@ function createPanelServer(options = {}) {
       const token = cookie ? cookie.slice(COOKIE.length + 1) : "";
       let session = sessions.get(token);
       if (session && session.expiresAt <= now) { sessions.delete(token); session = undefined; }
-      if (request.method === "GET" && url.pathname === "/api/session") return send(response, 200, session ? { authenticated: true, username: session.username } : { authenticated: false });
+      if (session) {
+        const user = auth.getSessionUser({ userId:session.userId, version:session.version });
+        if (!user) { sessions.delete(token); session = undefined; }
+        else session = { ...session, ...user };
+      }
+      if (request.method === "GET" && url.pathname === "/api/session") return send(response, 200, session ? sessionResponse(session) : { authenticated: false });
       if (request.method === "POST" && url.pathname === "/api/login") {
-        const address = request.socket.remoteAddress;
+        const address = rateLimitAddress(request, { publicOrigin, trustCloudflareProxy });
         const attempt = attempts.get(address) || { count: 0, expiresAt: now + 15 * 60 * 1000 };
         if (attempt.count >= 10) return send(response, 429, { error: "Zbyt wiele prób logowania. Spróbuj za 15 minut." });
         attempts.set(address, { ...attempt, count: attempt.count + 1 });
-        let input;
-        try { input = JSON.parse((await readBody(request)).toString("utf8")); }
-        catch (error) { if (error.status) throw error; return send(response, 400, { error: "Nieprawidłowy JSON." }); }
+        const input = await readJson(request);
         if (typeof input?.username !== "string" || typeof input?.password !== "string" || input.password.length > 1024 || input.username.length > 64) return send(response, 400, { error: "Podaj nazwę użytkownika i hasło." });
-        let admin;
-        try { admin = JSON.parse(fs.readFileSync(path.join(dataDir, "panel-admin.json"), "utf8")); }
-        catch (error) {
-          if (error.code === "ENOENT") return send(response, 503, { error: "Najpierw skonfiguruj konto: npm run panel:admin -- --username NAZWA." });
-          throw error;
-        }
-        const candidate = await scrypt(input.password, admin.salt, 32);
-        const expected = Buffer.from(admin.passwordHash, "hex");
-        const validHash = expected.length === candidate.length && crypto.timingSafeEqual(expected, candidate);
-        if (!validHash || input.username !== admin.username) return send(response, 401, { error: "Nieprawidłowa nazwa użytkownika lub hasło." });
+        const accountAddress = `${address}\0${input.username.toLowerCase()}`;
+        const accountAttempt = attempts.get(accountAddress) || { count:0, expiresAt:now + 15 * 60 * 1000 };
+        if (accountAttempt.count >= 10) return send(response, 429, { error:"Zbyt wiele prób logowania. Spróbuj za 15 minut." });
+        attempts.set(accountAddress,{ ...accountAttempt, count:accountAttempt.count + 1 });
+        if (!auth.hasUsers()) return send(response, 503, { error:"Najpierw skonfiguruj konto: npm run panel:admin -- --username NAZWA." });
+        const user = await auth.authenticate(input.username, input.password);
+        if (!user) return send(response, 401, { error: "Nieprawidłowa nazwa użytkownika lub hasło." });
         attempts.delete(address);
+        attempts.delete(accountAddress);
         // A successful reauthentication invalidates this browser's earlier session.
         if (token) sessions.delete(token);
         const nextToken = crypto.randomBytes(32).toString("hex");
-        sessions.set(nextToken, { username: admin.username, expiresAt: now + SESSION_AGE });
+        sessions.set(nextToken, { userId:user.id, version:user.version, expiresAt: now + SESSION_AGE });
         response.setHeader("Set-Cookie", `${COOKIE}=${nextToken}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_AGE / 1000}${origin.startsWith("https:") ? "; Secure" : ""}`);
-        return send(response, 200, { authenticated: true, username: admin.username });
+        return send(response, 200, sessionResponse(user));
       }
       if (request.method === "POST" && url.pathname === "/api/logout") {
         if (token) sessions.delete(token);
@@ -105,7 +130,20 @@ function createPanelServer(options = {}) {
       }
       if (url.pathname.startsWith("/api/")) {
         if (!session) return send(response, 401, { error: "Zaloguj się do panelu." });
-        const allowed = (request.method === "GET" && url.pathname === "/api/state") || (["POST", "PATCH", "DELETE"].includes(request.method) && mutation.test(url.pathname)) || (request.method === "POST" && url.pathname === "/api/actions/publish");
+        const usersRoute = /^\/api\/users(?:\/([^/]+))?$/.exec(url.pathname);
+        if (usersRoute) {
+          if (session.role !== "admin") return send(response, 403, { error:"Zarządzanie kontami wymaga roli administratora." });
+          const id = usersRoute[1] ? decodeURIComponent(usersRoute[1]) : null;
+          if (request.method === "GET" && !id) return send(response, 200, { users:auth.listUsers() });
+          if (request.method === "POST" && !id) return send(response, 201, { user:auth.createUser(await readJson(request)) });
+          if (request.method === "PATCH" && id) return send(response, 200, { user:auth.updateUser(id,await readJson(request),{ actorId:session.id }) });
+          if (request.method === "DELETE" && id) { auth.deleteUser(id,{ actorId:session.id }); return send(response, 200, { ok:true }); }
+          return send(response, 405, { error:"Niedozwolona metoda zarządzania kontami." });
+        }
+        if (isMutation && session.role === "viewer") return send(response, 403, { error:"Rola viewer pozwala wyłącznie przeglądać dane." });
+        const retryNotification = request.method === "POST" && /^\/api\/notifications\/[^/]+\/retry$/.test(url.pathname);
+        if (retryNotification && session.role !== "admin") return send(response, 403, { error:"Ponowienie powiadomienia wymaga roli administratora." });
+        const allowed = (request.method === "GET" && ["/api/state","/api/notifications"].includes(url.pathname)) || (["POST", "PATCH", "DELETE"].includes(request.method) && mutation.test(url.pathname)) || (request.method === "POST" && url.pathname === "/api/actions/publish") || retryNotification;
         if (!allowed) return send(response, 404, { error: "Nieznane API." });
         let key;
         try { key = fs.readFileSync(path.join(bridgeDir, "panel-bridge.key"), "utf8").trim(); }
@@ -148,6 +186,7 @@ function createPanelServer(options = {}) {
 }
 
 if (require.main === module) {
+  require("dotenv").config({ quiet:true });
   const server = createPanelServer();
   const port = Number(process.env.PANEL_PORT || 3200);
   const host = process.env.PANEL_HOST || "127.0.0.1";
@@ -158,4 +197,4 @@ if (require.main === module) {
   process.once("SIGTERM", stop);
 }
 
-module.exports = { createPanelServer };
+module.exports = { createPanelServer, rateLimitAddress };

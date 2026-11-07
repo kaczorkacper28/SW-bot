@@ -529,9 +529,9 @@ async function start() {
     if (process.env.OFFLINE === "1") console.log("Tryb lokalny: wszystkie moduły zainicjalizowane, Discord wyłączony.");
     else await client.login(TOKEN);
     started = true;
-  } catch (error) { stopTimers(); await client.destroy(); await management.stop(); await network.close(); throw error; }
+  } catch (error) { stopTimers(); await management.stop(); await client.destroy(); await network.close(); throw error; }
 }
-async function stop() { stopTimers(); await client.destroy(); await management.stop(); await network.close(); started = false; }
+async function stop() { stopTimers(); await management.stop(); await client.destroy(); await network.close(); started = false; }
 if (require.main === module) {
   start().catch(error => { console.error("Nie udało się uruchomić SW:", error.message); process.exitCode = 1; });
   for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { stop().then(() => process.exit(0)).catch(() => process.exit(1)); });

@@ -22,9 +22,9 @@
       <form id="login-form" class="login-form">
         <span class="overline">DOSTĘP SŁUŻBOWY</span>
         <h2>Zaloguj się do centrum</h2>
-        <p>Użyj konta administratora swojej jednostki.</p>
+        <p>Użyj konta przydzielonego przez administratora jednostki.</p>
         <label for="username">Nazwa użytkownika</label>
-        <input id="username" name="username" autocomplete="username" required maxlength="64" placeholder="Nazwa administratora">
+        <input id="username" name="username" autocomplete="username" required maxlength="64" placeholder="Nazwa użytkownika">
         <label for="password">Hasło</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required placeholder="Wprowadź hasło">
         <p id="login-error" class="form-error" role="alert"></p>
@@ -41,7 +41,7 @@
       <p class="nav-heading">CENTRUM DOWODZENIA</p>
       <nav id="navigation" aria-label="Nawigacja główna"></nav>
       <div class="sidebar-footer"><span class="status-dot" id="sidebar-status-dot"></span><div><strong id="sidebar-status">Sprawdzanie systemu</strong><small>Jeden bot · wspólna ewidencja</small></div></div>
-      <div class="sidebar-user"><div class="avatar">AD</div><div><strong id="admin-name">Administrator</strong><small>Administrator systemu</small></div><button id="logout" class="icon-button" title="Wyloguj" aria-label="Wyloguj"></button></div>
+      <div class="sidebar-user"><div class="avatar">SW</div><div><strong id="admin-name">Użytkownik</strong><small id="session-role">Konto służbowe</small></div><button id="logout" class="icon-button" title="Wyloguj" aria-label="Wyloguj"></button></div>
     </aside>
     <div id="sidebar-overlay" class="sidebar-overlay hidden"></div>
     <div class="main-wrap">
