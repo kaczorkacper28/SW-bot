@@ -180,7 +180,9 @@ test("publishing requires online bot, sends once, and blocks uncertain retries",
     assert.deepEqual(results.map(result => result.status).sort(), [200, 409]);
     assert.equal(sends, 1);
     assert.deepEqual(payload.allowedMentions, { parse: [] });
-    assert.equal(payload.embeds[0].description, "Treść");
+    const reportEmbed = payload.embeds[0].toJSON();
+    assert.equal(reportEmbed.title, "📋 NOWY RAPORT SŁUŻBOWY");
+    assert.equal(reportEmbed.fields.find(field => field.name === "📝 Przebieg służby").value, "Treść");
     const stored = JSON.parse(fs.readFileSync(path.join(dataDir, "panel-records.json"), "utf8"));
     assert.equal(stored.reports.find(item => item.id === first.id).discordMessageId, "100000000000000801");
     const uncertain = management.record("reports", { title: "Brak potwierdzenia", content: "Treść" });

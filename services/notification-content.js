@@ -102,6 +102,10 @@ function buildNotice(event) {
     if (event.resource === "calls") { add("Adresat",bounded(snapshot.target) || bounded(snapshot.name) || snapshot.userId); add("Termin",snapshot.deadline); }
     if (event.resource === "documents") add("Rodzaj dokumentu",snapshot.kind);
     if (["reports","proposals"].includes(event.resource)) add("Autor wpisu",bounded(snapshot.author) || snapshot.authorId);
+    if (event.resource === "reports") {
+      add("Data służby", snapshot.date); add("Godziny służby", snapshot.hours);
+      add("Miejsce służby", snapshot.place); add("Rodzaj służby", snapshot.serviceType || snapshot.title);
+    }
     excerpt = bounded(snapshot.content,500) || bounded(snapshot.reason,500);
   }
   if (excerpt) add("Fragment treści",excerpt,500);

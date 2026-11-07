@@ -70,6 +70,15 @@ uruchomienia samego panelu zatrzymuje również bota.
   Publikacja propozycji dodaje reakcje głosowania. Przy niepotwierdzonej wysyłce
   system blokuje powtórzenie: sprawdź kanał przed rozstrzygnięciem operacji.
   Tickety dokumentów nadal obsługują właściwe komendy bota.
+- **Formularz raportu służbowego:** funkcjonariusz, ID Discord, data i godziny
+  służby, miejsce, rodzaj oraz przebieg służby. Przycisk „Złóż raport” otwiera
+  ten formularz. Datę wybiera się z kalendarza; w ewidencji i na Discordzie ma
+  format `DD.MM.RRRR`. Pełna publikacja używa tej samej zielonej karty co formularz
+  Discord: „📋 NOWY RAPORT SŁUŻBOWY”, z informacją o funkcjonariuszu i wszystkimi
+  sekcjami służby. Treść do 4000 znaków jest dzielona na dalsze sekcje, gdy wymaga
+  tego limit Discorda. Dotychczasowe wpisy pozostają zachowane; brakujące dane
+  można uzupełnić podczas edycji. Krótkie powiadomienie o zmianie i publikacja
+  pełnego raportu są nadal osobnymi operacjami.
 - **Wypłaty:** ewidencja. Dodanie wpisu w panelu nie przelewa pieniędzy.
   Rzeczywistą wypłatę wykonuje `/sw-wyplata` przez UnbelievaBoat.
   Wymaga `MAIN_GUILD_ID` i `UNB_API_TOKEN` oraz właściwych uprawnień.

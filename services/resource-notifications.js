@@ -7,7 +7,7 @@ const storage = require("./storage");
 const FIELDS = {
   members: ["userId", "name", "number", "rank", "corps", "plus", "minus", "reprimands"],
   ranks: ["userId", "section", "number"],
-  reports: ["title", "author", "authorId", "content", "status"],
+  reports: ["title", "author", "authorId", "date", "hours", "place", "serviceType", "content", "status"],
   calls: ["title", "target", "name", "userId", "reason", "content", "deadline", "status"],
   documents: ["title", "kind", "content", "status"],
   proposals: ["title", "author", "authorId", "content", "status"],

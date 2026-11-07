@@ -79,10 +79,13 @@
       {key:"number",label:"Numer w dziale",type:"number",min:1,max:9999,required:true},
     ]},
     reports: {label:"Raporty",singular:"raport",icon:"file",description:"Raporty służbowe i dokumentacja działań.",fields:[
-      {key:"title",label:"Tytuł raportu",required:true,max:200,full:true},
-      {key:"author",label:"Autor raportu",max:100},
-      {key:"status",label:"Status",options:statuses},
-      {key:"content",label:"Treść raportu",type:"textarea",required:true,max:4000,full:true},
+      {key:"author",label:"Funkcjonariusz",required:true,max:100,full:true,help:"Imię i nazwisko lub pseudonim osoby składającej raport."},
+      {key:"authorId",label:"ID użytkownika Discord",required:true,pattern:"[0-9]{17,20}",max:20,full:true,help:"17–20 cyfr identyfikatora funkcjonariusza na Discordzie."},
+      {key:"date",label:"Data służby",type:"date",required:true},
+      {key:"hours",label:"Godziny służby",required:true,max:100,help:"Np. 20:00 lub 20:00–22:00."},
+      {key:"place",label:"Miejsce służby",required:true,max:200,full:true},
+      {key:"serviceType",label:"Rodzaj służby",required:true,max:100,full:true},
+      {key:"content",label:"Przebieg służby",type:"textarea",required:true,max:4000,full:true},
     ]},
     calls: {label:"Wezwania",singular:"wezwanie",icon:"call",description:"Ewidencja wezwań i ich realizacji.",fields:[
       {key:"title",label:"Tytuł / sygnatura wezwania",max:200,full:true},
@@ -406,6 +409,7 @@
   }
   function openAccountForm(mode, user = null) {
     if (!isAdmin()) {toast("Ta operacja wymaga konta administratora.",true);return;}
+    $("#record-dialog").classList.remove("report-dialog");
     activeForm = {name:"users",mode,record:user};
     $("#dialog-title").textContent = mode === "create" ? "Utwórz konto użytkownika" : mode === "password" ? "Ustaw nowe hasło" : "Zmień uprawnienia";
     $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent=mode==="create"?"Utwórz konto":mode==="password"?"Zmień hasło":"Zapisz zmiany";
@@ -524,7 +528,7 @@
     const quick = el("section","panel-card");
     quick.append(cardHeader(canWrite()?"Szybkie działania":"Szybki dostęp"));
     const links = el("div","quick-links");
-    for (const [name,label] of [["prisoners","Dodaj osadzonego"],["reports","Nowy raport"],["calls","Dodaj wezwanie"],["documents","Nowy dokument"]]) {
+    for (const [name,label] of [["prisoners","Dodaj osadzonego"],["reports","Złóż raport"],["calls","Dodaj wezwanie"],["documents","Nowy dokument"]]) {
       const link = button("","quick-link",() => canWrite()?openForm(name):navigate(name));
       link.append(icon(resources[name].icon),el("span","",canWrite()?label:resources[name].label));links.append(link);
     }
@@ -546,7 +550,7 @@
   }
   function renderResource() {
     const resource = resources[currentView];
-    const actions = resource.readonly || !canWrite() ? [] : [button("Dodaj wpis","button primary",() => openForm(currentView),"plus")];
+    const actions = resource.readonly || !canWrite() ? [] : [button(currentView==="reports"?"Złóż raport":"Dodaj wpis","button primary",() => openForm(currentView),currentView==="reports"?"file":"plus")];
     const main = $("#main");main.replaceChildren(heading(resource.label,resource.description,actions));
     if (resource.notice) main.append(el("div","notice",resource.notice));
     if (!canWrite()) main.append(el("div","intro-strip","Dostęp do podglądu — edycję wpisów wykonuje operator lub administrator."));
@@ -568,7 +572,7 @@
     if (currentView === "audit") records = recentEvents().filter(record => !query || Object.values(record).join(" ").toLocaleLowerCase("pl-PL").includes(query));
     node.replaceChildren();
     if (!records.length) {
-      node.append(emptyState(resources[currentView].icon,query?"Brak wyników":"Ewidencja jest pusta",query?"Zmień frazę wyszukiwania, aby znaleźć wpis.":"Nowe wpisy pojawią się tutaj po zapisaniu danych.",!query && !resources[currentView].readonly && canWrite() ? button("Dodaj pierwszy wpis","button secondary small",() => openForm(currentView),"plus"):null));
+      node.append(emptyState(resources[currentView].icon,query?"Brak wyników":"Ewidencja jest pusta",query?"Zmień frazę wyszukiwania, aby znaleźć wpis.":"Nowe wpisy pojawią się tutaj po zapisaniu danych.",!query && !resources[currentView].readonly && canWrite() ? button(currentView==="reports"?"Złóż pierwszy raport":"Dodaj pierwszy wpis","button secondary small",() => openForm(currentView),"plus"):null));
     } else node.append(buildTable(currentView,records));
   }
   function personCell(name, id) {
@@ -583,9 +587,31 @@
   }
   function textCell(value) {return el("span","",value ?? "—");}
   function titleCell(title,detail) {const node=el("div","record-detail");node.append(el("strong","record-title",title || "Bez tytułu"));if(detail)node.append(el("span","",String(detail).slice(0,230)));return node;}
+  function reportAuthorId(record) {
+    if (record.authorId) return String(record.authorId);
+    const author=String(record.author||"").trim();
+    const mention=/^<@!?(\d{17,20})>$/.exec(author);
+    return mention?mention[1]:/^\d{17,20}$/.test(author)?author:"";
+  }
+  function reportDateInput(value) {
+    const text=String(value||"").trim();
+    const polish=/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(text);
+    const iso=polish?polish[3]+"-"+polish[2].padStart(2,"0")+"-"+polish[1].padStart(2,"0"):text;
+    const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    if(!match)return "";
+    const date=new Date(iso+"T00:00:00Z");
+    return Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===iso?iso:"";
+  }
+  function reportFormValue(field,record) {
+    if(field==="serviceType")return record.serviceType||record.title||"";
+    if(field==="authorId")return reportAuthorId(record);
+    if(field==="author")return record.author||collection("members").find(member=>String(member.userId||member.id)===reportAuthorId(record))?.name||"";
+    if(field==="date")return reportDateInput(record.date);
+    return record[field];
+  }
   function buildTable(name,records,compact=false) {
     const wrapper=el("div","table-scroll");const table=el("table");
-    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","POWIADOMIENIE","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","POWIADOMIENIE","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","POWIADOMIENIE","AKCJE"],reports:["RAPORT","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","POWIADOMIENIE","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","POWIADOMIENIE","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
+    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","POWIADOMIENIE","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","POWIADOMIENIE","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","POWIADOMIENIE","AKCJE"],reports:["RODZAJ / PRZEBIEG SŁUŻBY","FUNKCJONARIUSZ","DATA / GODZINY SŁUŻBY","MIEJSCE SŁUŻBY","STATUS / PUBLIKACJA","POWIADOMIENIE","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","POWIADOMIENIE","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","POWIADOMIENIE","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
     const head=el("thead");const row=el("tr");
     const labels=compact?headings[name].slice(0,3):headings[name].filter(label => label !== "AKCJE" || canWrite());
     for(const label of labels){const th=el("th","",label);th.scope="col";row.append(th);}head.append(row);table.append(head);
@@ -598,7 +624,8 @@
         cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min")];
       }
       if(name==="ranks")cells=[textCell(record.userId||record.id),badge(sections[record.section]||record.section),textCell((record.section==="rekruci"?"SWRO":"SW-")+String(record.number||"?").padStart(2,"0"))];
-      if(["reports","documents","proposals"].includes(name))cells=[titleCell(record.title||resources[name].label,record.content || fieldDescription(record.fields)),textCell(name==="documents"?(record.kind||record.type):(record.author||record.authorId)),publicationStatus(record),textCell(formatDate(record.createdAt))];
+      if(name==="reports")cells=[titleCell(record.serviceType||record.title||"Raport służbowy",record.content),personCell(record.author||"Nie podano funkcjonariusza",reportAuthorId(record)),titleCell(record.date||"Brak daty",record.hours),textCell(record.place),publicationStatus(record)];
+      if(["documents","proposals"].includes(name))cells=[titleCell(record.title||resources[name].label,record.content || fieldDescription(record.fields)),textCell(name==="documents"?(record.kind||record.type):(record.author||record.authorId)),publicationStatus(record),textCell(formatDate(record.createdAt))];
       if(name==="calls")cells=[titleCell(record.title||"Wezwanie",record.reason||record.content),textCell(record.target||record.name||record.userId),publicationStatus(record),textCell(formatDate(record.createdAt))];
       if(name==="payouts")cells=[textCell(record.recipient||record.userId),textCell(Number(record.amount||0).toLocaleString("pl-PL",{style:"currency",currency:"PLN"})),titleCell(record.reason||record.content,(record.paid===true||record.status==="wypłacona")?"Wypłata potwierdzona przez bota":"Ewidencja — bez przelewu"),badge(record.status)];
       if(name==="audit")cells=[titleCell(record.title||record.message||actionLabels[record.action]||record.action,record.recordId||record.targetId),textCell(resources[record.resource]?.label||record.resource||record.type),textCell(record.actor||record.username||"System"),textCell(formatDate(record.createdAt||record.timestamp||record.at))];
@@ -691,9 +718,10 @@
   function openForm(name,record=null){
     if (!canWrite()) {toast("Twoje konto ma dostęp tylko do podglądu.",true);return;}
     const resource=resources[name];if(!resource || resource.readonly)return;
+    $("#record-dialog").classList.toggle("report-dialog",name==="reports");
     activeForm={name,record};
-    $("#dialog-title").textContent=(record?"Edytuj ":"Dodaj ")+resource.singular;
-    $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent="Zapisz wpis";
+    $("#dialog-title").textContent=name==="reports"?(record?"Edytuj raport służbowy":"Złóż raport służbowy"):(record?"Edytuj ":"Dodaj ")+resource.singular;
+    $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent=name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";
     const fields=$("#dialog-fields");fields.replaceChildren();
     for(const field of resource.fields){
       if(field.editOnly&&!record)continue;
@@ -714,6 +742,7 @@
       if(field.pattern)input.pattern=field.pattern;
       if(field.immutable&&record)input.disabled=true;
       let value=record?.[field.key]??field.default;
+      if(name==="reports"&&record)value=reportFormValue(field.key,record);
       if (record && value === undefined) {
         if (field.key === "author") value=record.authorId;
         if (field.key === "target") value=record.name||record.userId;
@@ -728,6 +757,7 @@
       fields.append(wrapper);
     }
     $("#record-dialog").showModal();
+    fields.scrollTop=0;
   }
   async function saveForm(event){
     event.preventDefault();if(!activeForm)return;
@@ -749,7 +779,7 @@
       const savedMessage=name==="payouts"?"Zapisano wpis w ewidencji wypłat. Pieniądze nie zostały wysłane.":name==="prisoners"?"Zapisano osadzonego w ewidencji.":"Zapisano wpis w module „"+resources[name].label+"”.";
       showNotificationOutcome(savedMessage,result.notification);
       await refresh();
-    }catch(error){$("#record-error").textContent=error.message;}finally{submit.disabled=false;submit.textContent="Zapisz wpis";}
+    }catch(error){$("#record-error").textContent=error.message;}finally{submit.disabled=false;submit.textContent=name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";}
   }
   function confirmRemove(name,record){
     if(!canWrite())return;

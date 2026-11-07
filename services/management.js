@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { createResourceNotifications } = require("./resource-notifications");
+const { buildReportMessage } = require("./report-content");
 
 const DATA_DIR = process.env.MANAGEMENT_DATA_DIR || process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
 const RECORDS_FILE = path.join(DATA_DIR, "panel-records.json");
@@ -140,13 +141,27 @@ async function readJson(request) {
 }
 
 const GENERIC_FIELDS = {
-  reports: ["title", "author", "content", "status"],
+  reports: ["title", "author", "authorId", "date", "hours", "place", "serviceType", "content", "status"],
   calls: ["title", "target", "reason", "status"],
   documents: ["title", "kind", "content", "status"],
   proposals: ["title", "author", "content", "status"],
   payouts: ["title", "recipient", "amount", "reason", "status"],
 };
 const STATUSES = ["nowy", "w toku", "zatwierdzony", "odrzucony", "zamknięty"];
+const REPORT_LIMITS = { author: 100, authorId: 20, date: 10, hours: 100, place: 200, serviceType: 100, content: 4000 };
+
+function reportDate(value) {
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const polish = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(value);
+  if (!iso && !polish) throw Object.assign(new Error("Data służby musi mieć format DD.MM.RRRR lub RRRR-MM-DD."), { status: 400 });
+  const [year, month, day] = iso ? [Number(iso[1]), Number(iso[2]), Number(iso[3])] : [Number(polish[3]), Number(polish[2]), Number(polish[1])];
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  if (year < 1 || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw Object.assign(new Error("Podaj prawidłową datę służby."), { status: 400 });
+  }
+  return `${String(day).padStart(2, "0")}.${String(month).padStart(2, "0")}.${String(year).padStart(4, "0")}`;
+}
 
 function validateInput(resource, input, creating) {
   const fields = GENERIC_FIELDS[resource];
@@ -158,13 +173,23 @@ function validateInput(resource, input, creating) {
       if (typeof value !== "number" || !Number.isFinite(value) || value <= 0 || value > 1e9) throw Object.assign(new Error("Kwota musi być liczbą większą od zera, do 1 000 000 000."), { status: 400 });
       result[key] = value;
     } else {
-      const limit = ["content", "reason"].includes(key) ? 10000 : 200;
+      const limit = resource === "reports" && Object.hasOwn(REPORT_LIMITS, key) ? REPORT_LIMITS[key] : ["content", "reason"].includes(key) ? 10000 : 200;
       if (typeof value !== "string" || value.length > limit) throw Object.assign(new Error(`Pole ${key} musi być tekstem do ${limit} znaków.`), { status: 400 });
       result[key] = value.trim();
       if (key === "status" && !STATUSES.includes(result[key])) throw Object.assign(new Error("Nieprawidłowy status wpisu."), { status: 400 });
     }
   }
-  const required = resource === "payouts" ? ["recipient", "amount", "reason"] : resource === "calls" ? ["target", "reason"] : ["title"];
+  if (resource === "reports") {
+    if (Object.hasOwn(result, "authorId") && !/^\d{17,20}$/.test(result.authorId)) throw Object.assign(new Error("ID funkcjonariusza Discord musi zawierać 17–20 cyfr."), { status: 400 });
+    if (Object.hasOwn(result, "date")) result.date = reportDate(result.date);
+    for (const field of ["hours", "place", "serviceType", "content"]) {
+      if (Object.hasOwn(result, field) && !result[field]) throw Object.assign(new Error(`Wymagane pole raportu: ${field}.`), { status: 400 });
+    }
+    if (Object.hasOwn(result, "serviceType")) result.title = result.serviceType;
+  }
+  const required = resource === "reports" && creating && Object.hasOwn(result, "serviceType")
+    ? ["authorId", "date", "hours", "place", "serviceType", "content"]
+    : resource === "payouts" ? ["recipient", "amount", "reason"] : resource === "calls" ? ["target", "reason"] : ["title"];
   for (const field of required) {
     if ((creating || Object.hasOwn(result, field)) && !result[field]) throw Object.assign(new Error(`Wymagane pole: ${field}.`), { status: 400 });
   }
@@ -248,6 +273,7 @@ async function publish(input, actor) {
   if (!process.env.GUILD_ID || String(channel.guildId || channel.guild?.id || "") !== String(process.env.GUILD_ID) || ![0, 5].includes(channel.type)) {
     throw Object.assign(new Error("Kanał publikacji musi należeć do skonfigurowanego serwera Discord GUILD_ID."), { status: 503 });
   }
+  const reportMessage = input.resource === "reports" ? buildReportMessage(item) : null;
   // Channel lookup can overlap an edit or deletion. Never send a stale snapshot.
   const current = records[input.resource].find(entry => String(entry.id) === input.id);
   if (current !== item) throw Object.assign(new Error("Wpis został zmieniony lub usunięty podczas przygotowania publikacji. Odśwież dane."), { status: 409 });
@@ -262,7 +288,7 @@ async function publish(input, actor) {
     if (input.resource === "calls" && item.target) fields.push({ name: "Adresat", value: String(item.target).slice(0, 1024) });
     if (item.author) fields.push({ name: "Autor", value: String(item.author).slice(0, 1024) });
     if (input.resource === "proposals" && item.title) fields.push({ name: "Tytuł", value: String(item.title).slice(0, 1024) });
-    const message = await channel.send({
+    const message = await channel.send(reportMessage || {
       embeds: [{ title: input.resource === "proposals" ? "💡 Nowa propozycja" : String(item.title || (input.resource === "calls" ? "Wezwanie SW" : "Służba Więzienna")).slice(0, 256), description: content, color: 3447003, fields, timestamp: new Date().toISOString() }],
       allowedMentions: { parse: [] },
     });

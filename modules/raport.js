@@ -1,4 +1,5 @@
 const management = require("../services/management");
+const { buildReportMessage } = require("../services/report-content");
 const {
     PermissionFlagsBits,
     EmbedBuilder,
@@ -258,57 +259,8 @@ client.on("interactionCreate", async interaction => {
         // TWORZENIE RAPORTU
         // ==============================================
 
-        const reportEmbed = new EmbedBuilder()
-            .setColor(0x19a85b)
-            .setTitle("📋 NOWY RAPORT SŁUŻBOWY")
-
-            .setDescription(
-                "## 👤 Funkcjonariusz\n" +
-                `${interaction.user}\n\n` +
-
-                `🆔 **ID użytkownika:** \`${interaction.user.id}\``
-            )
-
-            .addFields(
-
-                {
-                    name: "📅 Data służby",
-                    value: dataSluzby,
-                    inline: true
-                },
-
-                {
-                    name: "⏰ Godziny służby",
-                    value: godziny,
-                    inline: true
-                },
-
-                {
-                    name: "📍 Miejsce służby",
-                    value: miejsce,
-                    inline: false
-                },
-
-                {
-                    name: "🚔 Rodzaj służby",
-                    value: rodzaj,
-                    inline: false
-                },
-
-                {
-                    name: "📝 Przebieg służby",
-                    value: przebieg,
-                    inline: false
-                }
-
-            )
-
-            .setFooter({
-                text:
-                    "Służba Więzienna • System Raportów"
-            })
-
-            .setTimestamp();
+        const report = { authorId: interaction.user.id, author: interaction.user.toString(),
+            title: rodzaj, serviceType: rodzaj, date: dataSluzby, hours: godziny, place: miejsce, content: przebieg };
 
         // ==============================================
         // WYSŁANIE RAPORTU
@@ -316,16 +268,8 @@ client.on("interactionCreate", async interaction => {
 
         try {
 
-            const sentMessage = await reportChannel.send({
-                content:
-                    `📋 **Nowy raport służbowy** • ${interaction.user}`,
-
-                embeds: [
-                    reportEmbed
-                ]
-            });
-            management.recordDiscord("reports", { authorId: interaction.user.id, author: interaction.user.toString(), title: rodzaj,
-                date: dataSluzby, hours: godziny, place: miejsce, content: przebieg,
+            const sentMessage = await reportChannel.send(buildReportMessage(report));
+            management.recordDiscord("reports", { ...report,
                 channelId: reportChannel.id, discordMessageId: sentMessage.id, status: "nowy" });
 
         } catch (error) {

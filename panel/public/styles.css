@@ -6,6 +6,7 @@
 .mobile-table-hint{display:none}
 .notification-filters{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:20px}.notification-filter{display:flex;flex-direction:column;gap:6px;color:var(--muted);font-size:10px;min-width:210px}.notification-filter select{padding:10px 12px;background:var(--surface);border:1px solid var(--line);border-radius:6px;color:var(--text);font-size:11px}.notification-filters+.recent-table{margin-top:0}
 .notification-copy strong{overflow-wrap:anywhere}
+.report-dialog{overflow:hidden}.report-dialog form{display:flex;flex-direction:column;max-height:calc(90vh - 2px)}.report-dialog .dialog-header,.report-dialog .dialog-footer,.report-dialog .form-error{flex-shrink:0}.report-dialog .dialog-fields{min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#2a405e transparent}.report-dialog .dialog-footer{border-top:1px solid var(--line);background:var(--surface)}
 @media(max-width:700px){.notification-filter{flex:1;min-width:150px}}
 @media(max-width:700px){.account-roles{grid-template-columns:1fr;gap:9px}.account-role-card{padding:12px 15px}.account-role-card p{margin-top:3px}.notification-row{padding:15px;gap:10px}.notification-actions .button{font-size:9px;padding:6px 8px}.notification-copy strong{font-size:10px}.mobile-table-hint{display:block;color:var(--muted);font-size:9px;margin:-7px 0 14px}}
 @media(min-width:1500px){.main{padding-top:40px}.stats-grid{gap:22px}.dashboard-grid{grid-template-columns:minmax(0,1fr) 340px}.stat-card{padding:23px}.stat-value{font-size:38px}.main-footer{padding-bottom:23px}}
