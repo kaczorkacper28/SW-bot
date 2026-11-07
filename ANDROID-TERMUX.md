@@ -106,3 +106,23 @@ npm run dev
 
 Nie odinstalowuj Termuxa i nie czyść jego danych bez kopii bazy. Ewidencja oraz
 konto administratora znajdują się w lokalnym katalogu `SW-bot/data/`.
+
+## Gdy panel zgłasza brak połączenia
+
+W sesji Termuxa z uruchomionym programem naciśnij Ctrl+C. Następnie:
+
+```sh
+cd ~/SW-bot
+git pull --ff-only
+termux-wake-lock
+npm run dev:offline
+```
+
+Poczekaj na komunikat `Panel SW nasłuchuje na 127.0.0.1:3200.`. Zostaw Termux
+uruchomiony, przełącz się do Chrome i odśwież adres `http://127.0.0.1:3200`.
+Aktualna wersja obsługuje też przeglądarki bez `AbortSignal.timeout`. Błąd bota
+pozostawia osobny panel uruchomiony; panel pokaże wtedy brak połączenia z botem.
+Nie zmieniaj hasła, jeśli komunikat dotyczy połączenia, a nie danych logowania.
+
+Jeśli panel nadal się nie otwiera, sprawdź ostatnie komunikaty w Termuxie.
+Przekazuj wyłącznie treść błędu, bez tokena, hasła i zawartości `.env`.

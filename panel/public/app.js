@@ -144,18 +144,24 @@
     setTimeout(() => node.remove(), 5500);
   }
   async function api(path, options = {}) {
-    let response;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
     try {
-      response = await fetch(path, {...options, credentials:"same-origin", headers:{"Content-Type":"application/json",...options.headers},signal:AbortSignal.timeout(12000)});
-    } catch {
-      throw new Error("Brak połączenia z panelem. Sprawdź, czy serwer działa, i spróbuj ponownie.");
+      let response;
+      try {
+        response = await fetch(path, {...options, credentials:"same-origin", headers:{"Content-Type":"application/json",...options.headers},signal:controller.signal});
+      } catch {
+        throw new Error("Brak połączenia z panelem. Sprawdź, czy serwer działa, i spróbuj ponownie.");
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401 && path !== "/api/login") showLogin();
+        throw new Error(typeof data.error === "string" ? data.error : "Nie udało się wykonać operacji (" + response.status + ").");
+      }
+      return data;
+    } finally {
+      clearTimeout(timeoutId);
     }
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 401 && path !== "/api/login") showLogin();
-      throw new Error(typeof data.error === "string" ? data.error : "Nie udało się wykonać operacji (" + response.status + ").");
-    }
-    return data;
   }
   function showLogin() {
     authenticated = false;

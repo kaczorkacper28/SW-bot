@@ -46,7 +46,10 @@ npm run panel
 ```
 
 Do pracy bez Discorda zamiast `npm start` użyj `npm run start:offline`.
-Panel po zatrzymaniu bota pokazuje błąd połączenia zamiast potwierdzenia zapisu.
+Przy błędzie uruchomienia lub zatrzymaniu bota `npm run dev` pozostawia panel
+uruchomiony. Panel pokazuje brak połączenia z botem zamiast potwierdzenia zapisu.
+Sprawdź komunikat błędu bota w terminalu. Ctrl+C zatrzymuje oba procesy; błąd
+uruchomienia samego panelu zatrzymuje również bota.
 
 ## Dane i działanie panelu
 
