@@ -71,6 +71,7 @@
       {key:"poczatek",label:"Początek kary",type:"time",required:true,help:"Czas serwera, format HH:MM."},
       {key:"koniec",label:"Koniec kary",type:"time",required:true,help:"Wcześniejsza godzina oznacza kolejny dzień."},
       {key:"uwagi",label:"Uwagi",type:"textarea",max:1000,full:true},
+      {key:"przepustka",label:"Przepustka udzielona",type:"checkbox",default:false,full:true,help:"Zaznacz po udzieleniu przepustki. Odznacz po powrocie osadzonego."},
       {key:"paused",label:"Wstrzymaj odliczanie kary",type:"checkbox",editOnly:true,full:true},
     ]},
     ranks: {label:"Lista stopni",singular:"wpis do listy SW",icon:"rank",description:"Lista przydziałów i numerów w działach Służby Więziennej.",fields:[
@@ -611,7 +612,7 @@
   }
   function buildTable(name,records,compact=false) {
     const wrapper=el("div","table-scroll");const table=el("table");
-    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","POWIADOMIENIE","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","POWIADOMIENIE","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","POWIADOMIENIE","AKCJE"],reports:["RODZAJ / PRZEBIEG SŁUŻBY","FUNKCJONARIUSZ","DATA / GODZINY SŁUŻBY","MIEJSCE SŁUŻBY","STATUS / PUBLIKACJA","POWIADOMIENIE","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","POWIADOMIENIE","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","POWIADOMIENIE","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
+    const headings={members:["FUNKCJONARIUSZ","NUMER","STOPIEŃ","BILANS","POWIADOMIENIE","AKCJE"],prisoners:["OSADZONY","PARAGRAF / WYROK","CELA","KARA","PRZEPUSTKA","POWIADOMIENIE","AKCJE"],ranks:["ID DISCORD","DZIAŁ","NUMER","POWIADOMIENIE","AKCJE"],reports:["RODZAJ / PRZEBIEG SŁUŻBY","FUNKCJONARIUSZ","DATA / GODZINY SŁUŻBY","MIEJSCE SŁUŻBY","STATUS / PUBLIKACJA","POWIADOMIENIE","AKCJE"],calls:["WEZWANIE","OSOBA WZYWANA","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],documents:["DOKUMENT","RODZAJ","STATUS","DATA","POWIADOMIENIE","AKCJE"],proposals:["PROPOZYCJA","AUTOR","STATUS / PUBLIKACJA","DATA","POWIADOMIENIE","AKCJE"],payouts:["ODBIORCA","KWOTA","POWÓD","STATUS WPISU","POWIADOMIENIE","AKCJE"],audit:["OPERACJA","MODUŁ","WYKONAŁ","DATA"]};
     const head=el("thead");const row=el("tr");
     const labels=compact?headings[name].slice(0,3):headings[name].filter(label => label !== "AKCJE" || canWrite());
     for(const label of labels){const th=el("th","",label);th.scope="col";row.append(th);}head.append(row);table.append(head);
@@ -621,7 +622,7 @@
       if(name==="members")cells=[personCell(record.name || "Funkcjonariusz SW",record.userId || record.id),textCell("SW-"+String(record.number || "?").padStart(2,"0")),badge(record.rank || "Rekrut"),textCell("+"+(record.plus||0)+" / −"+(record.minus||0)+" · Nagany: "+(record.reprimands||0))];
       if(name==="prisoners"){
         const seconds=Number(record.remainingSeconds||0);const minutes=Math.max(0,Math.ceil(seconds/60));
-        cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min")];
+        cells=[personCell(record.imie || record.name,record.id),titleCell(record.paragraf || record.reason,record.wyrok),textCell(record.cela),badge(record.paused?"Wstrzymana · "+minutes+" min":minutes+" min"),el("span","badge "+(record.przepustka===true?"green":"gray"),record.przepustka===true?"Udzielona":"Brak")];
       }
       if(name==="ranks")cells=[textCell(record.userId||record.id),badge(sections[record.section]||record.section),textCell((record.section==="rekruci"?"SWRO":"SW-")+String(record.number||"?").padStart(2,"0"))];
       if(name==="reports")cells=[titleCell(record.serviceType||record.title||"Raport służbowy",record.content),personCell(record.author||"Nie podano funkcjonariusza",reportAuthorId(record)),titleCell(record.date||"Brak daty",record.hours),textCell(record.place),publicationStatus(record)];

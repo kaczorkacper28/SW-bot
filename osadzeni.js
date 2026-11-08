@@ -102,6 +102,7 @@ function validatePrisoner(input, previous) {
     const duration = calculateDurationBetween(item.poczatek, item.koniec);
     if (!duration) validate.fail("Początek i koniec kary muszą być różne.");
     if (input.paused !== undefined && typeof input.paused !== "boolean") validate.fail("Nieprawidłowa pauza kary.");
+    if (Object.hasOwn(input, "przepustka") && typeof input.przepustka !== "boolean") validate.fail("Przepustka musi mieć wartość tak lub nie.");
     const resetTime = !previous || item.poczatek !== previous.poczatek || item.koniec !== previous.koniec;
     if (previous) { const snapshot = { ...previous }; ensureTimer(snapshot); item.remainingSeconds = snapshot.remainingSeconds; }
     if (resetTime) item.remainingSeconds = duration * 60;
@@ -109,7 +110,7 @@ function validatePrisoner(input, previous) {
     item.paused = input.paused ?? previous?.paused ?? false;
     item.timerStartedAt = new Date().toISOString();
     item.czasKaryMinuty = duration; item.czasZWyrokuMinuty = calculateSentenceMinutes(item.wyrok);
-    item.przepustka = previous?.przepustka || false;
+    item.przepustka = input.przepustka ?? previous?.przepustka ?? false;
     // Only persist supported fields; never accept caller-owned Discord message identifiers.
     return { id: previous?.id, imie:item.imie, paragraf:item.paragraf, wyrok:item.wyrok, cela:item.cela,
       uwagi:item.uwagi, poczatek:item.poczatek, koniec:item.koniec, remainingSeconds:item.remainingSeconds,
@@ -630,6 +631,7 @@ client.on("interactionCreate", async interaction => {
                 { name: "👮 Zatwierdził", value: `${interaction.user}` }
             ).setTimestamp();
             await interaction.update({ embeds: [embed], components: [] });
+            if (osadzony) await refreshOsadzonyMessage(osadzony);
             await sendLog(interaction.guild, embed);
             return;
         }

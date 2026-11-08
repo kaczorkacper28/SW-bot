@@ -123,7 +123,8 @@ function createPrisonerNotifications({ client, getRecord, saveReference, buildCa
       .setDescription(bound(`${event.snapshot.imie} (${event.recordId})`, 1000))
       .addFields({ name: "Operator panelu", value: bound(event.actor, 128) },
         { name: "Cela", value: bound(event.snapshot.cela, 100), inline: true },
-        { name: "Paragraf", value: bound(event.snapshot.paragraf, 500), inline: true })
+        { name: "Paragraf", value: bound(event.snapshot.paragraf, 500), inline: true },
+        { name: "🎫 Przepustka", value: event.snapshot.przepustka ? "✅ Udzielona" : "❌ Brak", inline: true })
       .setFooter({ text: `Panel SW • ${event.id}` }).setTimestamp(new Date(event.createdAt));
   }
 

@@ -60,6 +60,14 @@ uruchomienia samego panelu zatrzymuje również bota.
   usunięcie w panelu tworzy automatyczne powiadomienie na Discordzie i aktualizuje
   kartę osadzonego. Panel pozwala pauzować licznik. Kolejka zachowuje zmiany offline
   i pokazuje rzeczywisty stan wysyłki; szczegóły poniżej.
+  Pole **Przepustka udzielona** jest dostępne przy dodawaniu i edycji osadzonego.
+  Zaznacz je po udzieleniu przepustki; odznacz po powrocie lub cofnięciu.
+  Status **Udzielona / Brak** widać w tabeli i na karcie Discord. Zmiana wysyła
+  powiadomienie oraz aktualizuje kartę przez tę samą kolejkę co pozostałe dane.
+  Przepustka i pauza licznika kary są osobnymi ustawieniami. Wnioski składane
+  komendą `/przepustka` i decyzje pod nimi nadal korzystają ze wspólnego rejestru;
+  zatwierdzona na Discordzie przepustka pojawia się także w panelu. Ręczna zmiana
+  statusu w panelu zachowuje historię wniosków.
 - **Stopnie:** wspólna lista organizacyjna w sekcjach szefostwo, pracownicy, rekruci.
   Jest to lista obsługiwana komendami `/stopnie-*`, odrębna od stopnia w karcie kadrowej.
 - **Raporty, wezwania, dokumenty, propozycje:** rejestry lokalne panelu i historia
