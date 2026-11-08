@@ -60,7 +60,7 @@ uruchomienia samego panelu zatrzymuje również bota.
   usunięcie w panelu tworzy automatyczne powiadomienie na Discordzie i aktualizuje
   kartę osadzonego. Panel pozwala pauzować licznik. Kolejka zachowuje zmiany offline
   i pokazuje rzeczywisty stan wysyłki; szczegóły poniżej.
-  Pole **Przepustka udzielona** jest dostępne przy dodawaniu i edycji osadzonego.
+  Administrator ma pole **Przepustka udzielona** przy dodawaniu i edycji osadzonego.
   Zaznacz je po udzieleniu przepustki; odznacz po powrocie lub cofnięciu.
   Status **Udzielona / Brak** widać w tabeli i na karcie Discord. Zmiana wysyła
   powiadomienie oraz aktualizuje kartę przez tę samą kolejkę co pozostałe dane.
@@ -68,6 +68,17 @@ uruchomienia samego panelu zatrzymuje również bota.
   komendą `/przepustka` i decyzje pod nimi nadal korzystają ze wspólnego rejestru;
   zatwierdzona na Discordzie przepustka pojawia się także w panelu. Ręczna zmiana
   statusu w panelu zachowuje historię wniosków.
+- **Przepustki — wnioski:** administrator i operator mogą wybrać osadzonego oraz
+  podać godziny od/do, miejsce i powód. Nowy wniosek ma status **Oczekuje**.
+  Administrator zatwierdza lub odrzuca go w zakładce **Przepustki**; operatorzy
+  i konta podglądu nie podejmują decyzji. Filtry pokazują oczekujące, rozpatrzone
+  lub wszystkie wnioski. Uprawnione osoby na Discordzie nadal używają komend
+  `/przepustka`, `/przepustki` i przycisków pod wnioskiem. Oba miejsca korzystają
+  z tego samego rejestru `przepustki` w `data/osadzeni.json`.
+  Zatwierdzenie ustawia osadzonemu udzieloną przepustkę i odświeża jego kartę.
+  Odrzucenie jednego wniosku nie cofa innej, już udzielonej przepustki.
+  Rozpatrzony wniosek zachowuje dane, autora, decyzję, rozpatrującego i czas;
+  nie można wydać drugiej decyzji dla tego samego wniosku.
 - **Stopnie:** wspólna lista organizacyjna w sekcjach szefostwo, pracownicy, rekruci.
   Jest to lista obsługiwana komendami `/stopnie-*`, odrębna od stopnia w karcie kadrowej.
 - **Raporty, wezwania, dokumenty, propozycje:** rejestry lokalne panelu i historia
@@ -142,8 +153,8 @@ dla każdej osoby i wybierz rolę:
 
 | Rola | Uprawnienia |
 | --- | --- |
-| Administrator | Zarządzanie danymi, kontami i ponawianiem powiadomień |
-| Operator | Dodawanie, edycja i usuwanie danych oraz publikacja na Discordzie |
+| Administrator | Zarządzanie danymi, kontami, decyzjami o przepustkach i ponawianiem powiadomień |
+| Operator | Dodawanie, edycja i usuwanie danych, składanie wniosków o przepustkę oraz publikacja na Discordzie |
 | Podgląd | Odczyt danych, bez operacji zapisu |
 
 Nie ma publicznej rejestracji. Hasła mają minimum 12 znaków. Reset hasła,
@@ -185,7 +196,8 @@ Połączenie rzeczywistego tunelu trzeba sprawdzić na telefonie.
 ## Automatyczne wiadomości ze wszystkich modułów
 
 Dodanie, edycja i usunięcie przez panel tworzy powiadomienie dla **kadr, osadzonych,
-stopni, raportów, wezwań, dokumentów, propozycji i wypłat**. Wiadomość zawiera rodzaj
+stopni, raportów, wezwań, dokumentów, propozycji i wypłat**. Wnioski o przepustkę
+i decyzje aktualizują osobną kartę przepustki. Wiadomość zawiera rodzaj
 zmiany, dane wpisu i nazwę operatora panelu. Powiadomienia nie obejmują kont
 użytkowników ani dziennika operacji.
 
@@ -195,6 +207,7 @@ Kanały wybiera się osobno dla modułów. Wszystkie muszą należeć do `GUILD_
 | --- | --- | --- |
 | Kadry | `PANEL_MEMBERS_CHANNEL_ID` | Kanał logów zapisany przez moduł kadr, następnie `kadry` lub `funkcjonariusze` |
 | Osadzeni | `PRISONERS_CHANNEL_ID` | `osadzeni` lub `osądzeni` |
+| Wnioski o przepustkę | `PASSES_CHANNEL_ID` | `przepustki` |
 | Stopnie | `PANEL_RANKS_CHANNEL_ID` | Kanał zapisany przez moduł stopni, następnie `stopnie` lub `lista-sw` |
 | Raporty | `PANEL_REPORTS_CHANNEL_ID` | `REPORT_CHANNEL_ID`, następnie `raporty` lub `raporty-służbowe` |
 | Wezwania | `PANEL_CALLS_CHANNEL_ID` | `CALL_CHANNEL_ID`, następnie `wezwania` |
@@ -221,11 +234,17 @@ Komunikat o wypłacie dotyczy wpisu w ewidencji, również przy jego edycji lub 
 Wiadomości nie uruchamiają wzmianek. Operacje wykonane bezpośrednio przez komendy
 Discord zachowują własne wiadomości; zapis ich historii nie tworzy drugiego powiadomienia.
 
-Kolejki zapisują się w `data/resource-notifications.json` oraz
-`data/prisoner-notifications.json`. Zmiany wykonane offline czekają na powrót
+Kolejki zapisują się w `data/resource-notifications.json`,
+`data/prisoner-notifications.json` i `data/pass-notifications.json`. Zmiany wykonane offline czekają na powrót
 bota, a restart nie usuwa oczekujących wpisów. Niepotwierdzona wysyłka jest blokowana
 przed powtórzeniem: sprawdź wtedy kanał Discord. Dane kolejek wymagają takiej samej
 kopii zapasowej jak pozostałe pliki w `data/`.
+
+Karta wniosku w kanale przepustek ma przyciski zatwierdzenia i odrzucenia.
+Po decyzji karta zachowuje dane wniosku i pokazuje wynik; przyciski znikają.
+Przy braku potwierdzenia wysyłki sprawdź Discord przed ponowieniem. Zapis wniosku
+i decyzji pozostaje ważny także przy awarii kanału. Starsze numery są zachowane,
+a nowy licznik przepustek nie cofa się po usunięciu wniosku.
 
 ### Karty osadzonych
 

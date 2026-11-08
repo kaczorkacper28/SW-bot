@@ -50,8 +50,8 @@
   const rankNames = ["Rekrut", "Szeregowy", "Starszy szeregowy", "Kapral", "Starszy kapral", "Plutonowy", "Sierżant", "Starszy sierżant", "Sierżant sztabowy", "Chorąży", "Starszy chorąży", "Chorąży sztabowy", "Podporucznik", "Porucznik", "Kapitan", "Major", "Podpułkownik", "Pułkownik", "Generał", "Generał inspektor"];
   const statuses = ["nowy", "w toku", "zatwierdzony", "odrzucony", "zamknięty"];
   const roleLabels = {admin:"Administrator",operator:"Operator",viewer:"Podgląd"};
-  const businessResources = ["members","prisoners","ranks","reports","calls","documents","proposals","payouts"];
-  const actionLabels = {create:"Dodano wpis",update:"Zaktualizowano wpis",remove:"Usunięto wpis",delete:"Usunięto wpis",discord:"Aktywność Discord",publish:"Opublikowano na Discordzie","publish-pending":"Rozpoczęto publikację","publish-uncertain":"Sprawdź wynik publikacji na Discordzie"};
+  const businessResources = ["members","prisoners","passes","ranks","reports","calls","documents","proposals","payouts"];
+  const actionLabels = {create:"Dodano wpis",update:"Zaktualizowano wpis",remove:"Usunięto wpis",delete:"Usunięto wpis",approve:"Zatwierdzono wniosek",reject:"Odrzucono wniosek",discord:"Aktywność Discord",publish:"Opublikowano na Discordzie","publish-pending":"Rozpoczęto publikację","publish-uncertain":"Sprawdź wynik publikacji na Discordzie"};
   const sections = {szefostwo: "Szefostwo", pracownicy: "Pracownicy SW", rekruci: "Rekruci"};
   const resources = {
     members: {label:"Funkcjonariusze", singular:"funkcjonariusza", icon:"users", description:"Ewidencja kadry, stopnie i historia służby.", fields:[
@@ -71,8 +71,15 @@
       {key:"poczatek",label:"Początek kary",type:"time",required:true,help:"Czas serwera, format HH:MM."},
       {key:"koniec",label:"Koniec kary",type:"time",required:true,help:"Wcześniejsza godzina oznacza kolejny dzień."},
       {key:"uwagi",label:"Uwagi",type:"textarea",max:1000,full:true},
-      {key:"przepustka",label:"Przepustka udzielona",type:"checkbox",default:false,full:true,help:"Zaznacz po udzieleniu przepustki. Odznacz po powrocie osadzonego."},
+      {key:"przepustka",label:"Przepustka udzielona",type:"checkbox",default:false,full:true,adminOnly:true,help:"Ręczne oznaczenie administratora. Wnioski i decyzje są dostępne w zakładce Przepustki."},
       {key:"paused",label:"Wstrzymaj odliczanie kary",type:"checkbox",editOnly:true,full:true},
+    ]},
+    passes: {label:"Przepustki",singular:"wniosek o przepustkę",icon:"file",description:"Wnioski o przepustki i decyzje uprawnionej kadry.",fields:[
+      {key:"osadzonyId",label:"Osadzony",required:true,full:true,options:()=>[["","Wybierz osadzonego"],...collection("prisoners").map(item=>[String(item.id),item.id+" · "+item.imie])]},
+      {key:"od",label:"Od godziny",type:"time",required:true},
+      {key:"do",label:"Do godziny",type:"time",required:true,help:"Wcześniejsza godzina oznacza powrót następnego dnia."},
+      {key:"powod",label:"Powód przepustki",type:"textarea",required:true,max:1000,full:true},
+      {key:"miejsce",label:"Miejsce pobytu",required:true,max:200,full:true},
     ]},
     ranks: {label:"Lista stopni",singular:"wpis do listy SW",icon:"rank",description:"Lista przydziałów i numerów w działach Służby Więziennej.",fields:[
       {key:"userId",label:"ID użytkownika Discord",required:true,pattern:"[0-9]{17,20}",immutable:true,full:true},
@@ -124,6 +131,8 @@
   let activeForm = null;
   let pendingDelete = null;
   let pendingPublish = null;
+  let pendingPassDecision = null;
+  let passStatusFilter = "oczekuje";
   let lastRefresh = null;
   let account = {id:null,username:"",role:"viewer"};
   let users = null;
@@ -132,7 +141,7 @@
   let notificationFilters = {resource:"",status:""};
   const canWrite = () => authenticated && ["admin","operator"].includes(account.role);
   const isAdmin = () => authenticated && account.role === "admin";
-  const dialogsOpen = () => ["#record-dialog","#confirm-dialog","#publish-dialog"].some(selector => $(selector).open);
+  const dialogsOpen = () => ["#record-dialog","#confirm-dialog","#publish-dialog","#pass-decision-dialog"].some(selector => $(selector).open);
   const dateFormat = new Intl.DateTimeFormat("pl-PL", {timeZone:"Europe/Warsaw",day:"numeric",month:"long",year:"numeric"});
   const timeFormat = new Intl.DateTimeFormat("pl-PL", {timeZone:"Europe/Warsaw",hour:"2-digit",minute:"2-digit"});
   function formatDate(value) {
@@ -188,6 +197,8 @@
     users = null;
     usersError = "";
     account = {id:null,username:"",role:"viewer"};
+    pendingPassDecision = null;
+    $("#pass-decision-description").textContent = "";
     $("#app").classList.add("hidden");
     $("#login-screen").classList.remove("hidden");
     $("#password").value = "";
@@ -195,6 +206,7 @@
     if ($("#record-dialog").open) $("#record-dialog").close();
     if ($("#confirm-dialog").open) $("#confirm-dialog").close();
     if ($("#publish-dialog").open) $("#publish-dialog").close();
+    if ($("#pass-decision-dialog").open) $("#pass-decision-dialog").close();
   }
   async function showApp(session) {
     authenticated = true;
@@ -279,6 +291,7 @@
       if (currentView === key) link.setAttribute("aria-current", "page");
       link.append(icon(meta.icon),el("span", "", meta.label));
       if (["members","prisoners","reports"].includes(key) && snapshot) link.append(el("span","nav-count",collection(key).length));
+      if (key === "passes" && snapshot) link.append(el("span","nav-count",collection("passes").filter(item=>item.status==="oczekuje").length));
       if (key === "notifications" && snapshot) {
         const waiting = notifications().filter(entry => entry.status !== "sent").length;
         if (waiting) link.append(el("span","nav-count",waiting));
@@ -332,6 +345,7 @@
     $("#breadcrumb-view").textContent = currentView === "overview" ? "Pulpit" : resources[currentView].label;
     document.title = (currentView === "overview" ? "Pulpit" : resources[currentView].label) + " — SW Centrum";
     if (currentView === "users") renderUsers();
+    else if (currentView === "passes") renderPasses();
     else if (currentView === "notifications") renderNotificationPage();
     else if (currentView === "overview") renderOverview(); else renderResource();
   }
@@ -566,6 +580,79 @@
     const tableArea = el("section","panel-card");tableArea.id="records-area";main.append(tableArea);renderRecords();
     if (businessResources.includes(currentView)) main.append(renderNotifications(currentView));
   }
+  function openPassForm(prisonerId = "") {
+    if(!canWrite()){toast("Twoje konto ma dostęp tylko do podglądu.",true);return;}
+    if(!collection("prisoners").length){toast("Przed złożeniem wniosku dodaj osadzonego do rejestru.","warning");return;}
+    openForm("passes",null,{osadzonyId:prisonerId});
+  }
+  function passStatusBadge(status) {
+    const labels={oczekuje:"Oczekuje",zatwierdzona:"Zatwierdzona",odrzucona:"Odrzucona"};
+    return el("span","badge "+(status==="zatwierdzona"?"green":status==="odrzucona"?"red":"gold"),labels[status]||status||"Brak statusu");
+  }
+  function renderPasses() {
+    const main=$("#main");
+    const actions=canWrite()?[button("Złóż wniosek","button primary",()=>openPassForm(),"plus")]:[];
+    main.replaceChildren(heading("Przepustki","Złóż wniosek dla osadzonego i sprawdź decyzję kadry.",actions));
+    main.append(el("div","intro-strip",isAdmin()?"Wnioski oczekują na decyzję administratora. Zatwierdzenie oznaczy przepustkę osadzonego jako udzieloną.":canWrite()?"Możesz złożyć wniosek. Decyzję o zatwierdzeniu lub odrzuceniu podejmuje administrator.":"Dostęp do podglądu — możesz przeglądać wnioski, ich statusy i decyzje."));
+    if(!collection("prisoners").length&&canWrite())main.append(el("div","notice","Aby złożyć wniosek, najpierw dodaj osadzonego do rejestru."));
+    const filters=el("div","pass-filters");
+    const selectLabel=el("label","notification-filter","Status wniosku");const select=el("select");select.id="pass-status-filter";select.setAttribute("aria-label","Status wniosku");
+    for(const[value,label]of [["oczekuje","Oczekujące"],["","Wszystkie"],["zatwierdzona","Zatwierdzone"],["odrzucona","Odrzucone"]]){
+      const count=collection("passes").filter(item=>!value||item.status===value).length;
+      const option=el("option","",label+" ("+count+")");option.value=value;select.append(option);
+    }
+    select.value=passStatusFilter;select.addEventListener("change",()=>{passStatusFilter=select.value;renderPassesList();});selectLabel.append(select);
+    const searchBox=el("label","search-box");searchBox.append(icon("search"));
+    const input=el("input");input.id="records-search";input.type="search";input.placeholder="Szukaj osadzonego lub wniosku…";input.setAttribute("aria-label","Szukaj wniosków o przepustkę");input.value=search;input.addEventListener("input",()=>{search=input.value;renderPassesList();});searchBox.append(input);
+    filters.append(selectLabel,searchBox);main.append(filters);
+    const area=el("div","passes-grid");area.id="passes-area";main.append(area);renderPassesList();
+    main.append(renderNotifications("passes"));
+  }
+  function renderPassesList() {
+    const area=$("#passes-area");if(!area)return;
+    const query=search.toLocaleLowerCase("pl-PL").trim();
+    const entries=collection("passes").filter(item=>(!passStatusFilter||item.status===passStatusFilter)&&(!query||[item.id,item.osadzonyId,item.osadzony,item.powod,item.miejsce,item.zlozyl,item.rozpatrzyl].filter(Boolean).join(" ").toLocaleLowerCase("pl-PL").includes(query))).slice().sort((a,b)=>String(b.utworzono||"").localeCompare(String(a.utworzono||"")));
+    area.replaceChildren();
+    if(!entries.length){area.append(emptyState("file",query?"Brak wyników":passStatusFilter==="oczekuje"?"Brak oczekujących wniosków":"Brak wniosków w tym widoku",query?"Zmień frazę wyszukiwania lub status wniosku.":"Złożone wnioski będą dostępne w tej zakładce."));return;}
+    for(const entry of entries){
+      const card=el("article","panel-card pass-card");card.dataset.passId=String(entry.id);card.dataset.status=String(entry.status);
+      const prisonerName=entry.osadzony||collection("prisoners").find(item=>String(item.id)===String(entry.osadzonyId))?.imie||"Osadzony";
+      card.append(cardHeader(entry.id+" · "+prisonerName,entry.osadzonyId,passStatusBadge(entry.status)));
+      const content=el("div","pass-card-body");const details=el("dl","pass-details");
+      const period=entry.od&&entry.do?entry.od+" – "+entry.do+(entry.do<entry.od?" (następny dzień)":""):"Brak godzin";
+      for(const[label,value]of [["Godziny przepustki",period],["Miejsce pobytu",entry.miejsce],["Złożył",entry.zlozyl],["Data złożenia",formatDate(entry.utworzono)]]){
+        const pair=el("div");pair.append(el("dt","",label),el("dd","",value||"—"));details.append(pair);
+      }
+      content.append(details,el("h3","pass-reason-heading","Powód przepustki"),el("p","pass-reason",entry.powod||"Brak podanego powodu."));
+      if(entry.status!=="oczekuje"){
+        const review=el("div","pass-review");review.append(el("strong","","Decyzja kadry"),el("p","","Rozpatrzył: "+(entry.rozpatrzyl||"Brak informacji")),el("p","","Data decyzji: "+formatDate(entry.rozpatrzono)));content.append(review);
+      }
+      const footer=el("div","pass-card-footer");const delivery=el("div","pass-delivery");delivery.append(el("small","","Powiadomienie Discord"),notificationBadge(notifications("passes").find(item=>String(item.recordId)===String(entry.id))));footer.append(delivery);
+      if(isAdmin()&&entry.status==="oczekuje"){
+        const actions=el("div","pass-decision-actions");
+        const approve=button("Zatwierdź","button primary small",()=>confirmPassDecision(entry,"approve"));approve.setAttribute("aria-label","Zatwierdź wniosek "+entry.id);
+        const reject=button("Odrzuć","button danger small",()=>confirmPassDecision(entry,"reject"));reject.setAttribute("aria-label","Odrzuć wniosek "+entry.id);actions.append(approve,reject);footer.append(actions);
+      }
+      card.append(content,footer);area.append(card);
+    }
+  }
+  function confirmPassDecision(entry,decision) {
+    if(!isAdmin())return;
+    pendingPassDecision={entry,decision};
+    $("#pass-decision-title").textContent=decision==="approve"?"Zatwierdzić wniosek?":"Odrzucić wniosek?";
+    $("#pass-decision-description").textContent=entry.id+" · "+(entry.osadzony||entry.osadzonyId)+". "+(decision==="approve"?"Zatwierdzenie oznaczy przepustkę osadzonego jako udzieloną.":"Wniosek zostanie oznaczony jako odrzucony.");
+    $("#pass-decision-submit").textContent=decision==="approve"?"Zatwierdź wniosek":"Odrzuć wniosek";
+    $("#pass-decision-submit").className="button "+(decision==="approve"?"primary":"danger");$("#pass-decision-submit").disabled=false;$("#pass-decision-dialog").showModal();
+  }
+  async function decidePass() {
+    if(!isAdmin()||!pendingPassDecision)return;
+    const{entry,decision}=pendingPassDecision;const submit=$("#pass-decision-submit");submit.disabled=true;submit.textContent="Zapisywanie…";
+    try{
+      const result=await api("/api/passes/"+encodeURIComponent(entry.id)+"/decision",{method:"POST",body:JSON.stringify({decision})});
+      $("#pass-decision-dialog").close();showNotificationOutcome(decision==="approve"?"Zatwierdzono wniosek o przepustkę.":"Odrzucono wniosek o przepustkę.",result.notification);await refresh();
+    }catch(error){$("#pass-decision-dialog").close();toast(error.message,true);await refresh(true);}
+    finally{submit.disabled=false;}
+  }
   function renderRecords() {
     const node = $("#records-area");if (!node) return;
     const query = search.toLocaleLowerCase("pl-PL").trim();
@@ -637,6 +724,9 @@
         const edit=button("","icon-button",()=>openForm(name,record),"edit");edit.title="Edytuj wpis";edit.setAttribute("aria-label","Edytuj wpis "+(record.title||record.name||record.imie||record.id));
         const remove=button("","icon-button",()=>confirmRemove(name,record),"trash");remove.title="Usuń wpis";remove.setAttribute("aria-label","Usuń wpis "+(record.title||record.name||record.imie||record.id));
         actions.append(edit);
+        if(name==="prisoners"){
+          const request=button("Wniosek o przepustkę","button secondary small",()=>openPassForm(String(record.id)),"file");request.setAttribute("aria-label","Wniosek o przepustkę: "+(record.imie||record.id));actions.append(request);
+        }
         if (["reports","calls","proposals"].includes(name)) {
           const publish = button("","icon-button",()=>confirmPublish(name,record),"send");
           const sent = record.discordMessageId || record.messageId || ["pending","published","uncertain"].includes(record.publishState);
@@ -677,13 +767,13 @@
     card.append(cardHeader(resource?"Powiadomienia Discord":"Historia zgłoszeń",resource?"Ostatnie "+limit+" zgłoszeń · "+resources[resource].label:"Zgłoszenia zmian ze wszystkich modułów"));
     const rows=notifications(resource).filter(entry=>!status||entry.status===status).slice(0,limit);
     if(!rows.length){card.append(emptyState("activity","Brak powiadomień","Po zmianie wpisu pojawi się tu stan automatycznego zgłoszenia na Discordzie."));return card;}
-    const labels={create:"Dodano wpis",update:"Zmieniono wpis",remove:"Usunięto wpis",delete:"Usunięto wpis"};
+    const labels={create:"Dodano wpis",update:"Zmieniono wpis",remove:"Usunięto wpis",delete:"Usunięto wpis",approve:"Zatwierdzono wniosek",reject:"Odrzucono wniosek"};
     for(const entry of rows){
       const entryResource=notificationResource(entry);
       const row=el("div","notification-row");row.dataset.resource=entryResource;row.dataset.recordId=String(entry.recordId||"");
       const copy=el("div","notification-copy");
       const record=collection(entryResource).find(item=>String(item.id||item.userId)===String(entry.recordId));
-      const recordLabel=record?.title||record?.name||record?.imie||record?.recipient||entry.recordId;
+      const recordLabel=record?.title||record?.name||record?.imie||record?.osadzony||record?.recipient||entry.recordId;
       copy.append(el("strong","",(labels[entry.action]||"Zmiana wpisu")+" · "+resources[entryResource].label+(recordLabel?" · "+String(recordLabel).slice(0,100):"")),el("p","",entry.message||"Oczekiwanie na informację o wysyłce."),el("small","",[entry.actor,formatDate(entry.createdAt)].filter(Boolean).join(" · ")));
       const actions=el("div","notification-actions");actions.append(notificationBadge(entry));
       if(isAdmin()&&entry.status!=="sent"&&entry.canRetry){
@@ -716,24 +806,26 @@
       toast(savedMessage+" "+notification.message,notification.status==="sent"?false:"warning");
     } else toast(savedMessage+" Stan powiadomienia Discord nie jest dostępny.","warning");
   }
-  function openForm(name,record=null){
+  function openForm(name,record=null,defaults={}){
     if (!canWrite()) {toast("Twoje konto ma dostęp tylko do podglądu.",true);return;}
     const resource=resources[name];if(!resource || resource.readonly)return;
     $("#record-dialog").classList.toggle("report-dialog",name==="reports");
     activeForm={name,record};
-    $("#dialog-title").textContent=name==="reports"?(record?"Edytuj raport służbowy":"Złóż raport służbowy"):(record?"Edytuj ":"Dodaj ")+resource.singular;
-    $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent=name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";
+    $("#dialog-title").textContent=name==="passes"?"Złóż wniosek o przepustkę":name==="reports"?(record?"Edytuj raport służbowy":"Złóż raport służbowy"):(record?"Edytuj ":"Dodaj ")+resource.singular;
+    $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent=name==="passes"?"Złóż wniosek":name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";
     const fields=$("#dialog-fields");fields.replaceChildren();
     for(const field of resource.fields){
       if(field.editOnly&&!record)continue;
+      if(field.adminOnly&&!isAdmin())continue;
+      const options=typeof field.options==="function"?field.options():field.options;
       const wrapper=el("div","field"+(field.full?" full":"")+(field.type==="checkbox"?" checkbox":""));
       const id="field-"+field.key;
       const label=el("label","",field.label+(field.required?" *":""));label.htmlFor=id;
       let input;
-      if(field.options){
+      if(options){
         input=el("select");
-        for(const option of field.options){const [value,title]=Array.isArray(option)?option:[option,option];const opt=el("option","",title);opt.value=value;input.append(opt);}
-        if (record?.[field.key] && !field.options.some(option => (Array.isArray(option) ? option[0] : option) === record[field.key])) {
+        for(const option of options){const [value,title]=Array.isArray(option)?option:[option,option];const opt=el("option","",title);opt.value=value;input.append(opt);}
+        if (record?.[field.key] && !options.some(option => (Array.isArray(option) ? option[0] : option) === record[field.key])) {
           const preserved = el("option","",String(record[field.key]) + " (zapis Discord)");preserved.value=String(record[field.key]);input.append(preserved);
         }
       }else{input=el(field.type==="textarea"?"textarea":"input");if(field.type!=="textarea")input.type=field.type||"text";}
@@ -742,7 +834,7 @@
       if(field.max!==undefined){if(field.type==="number")input.max=field.max;else input.maxLength=field.max;}
       if(field.pattern)input.pattern=field.pattern;
       if(field.immutable&&record)input.disabled=true;
-      let value=record?.[field.key]??field.default;
+      let value=record?.[field.key]??defaults[field.key]??field.default;
       if(name==="reports"&&record)value=reportFormValue(field.key,record);
       if (record && value === undefined) {
         if (field.key === "author") value=record.authorId;
@@ -767,20 +859,24 @@
     const {name,record}=activeForm;
     const body={};
     for(const field of resources[name].fields){
+      if(field.adminOnly&&!isAdmin())continue;
       const input=$("#field-"+field.key);if(!input)continue;
-      if (record && field.options && input.value === record[field.key] && !field.options.some(option => (Array.isArray(option) ? option[0] : option) === input.value)) continue;
+      const options=typeof field.options==="function"?field.options():field.options;
+      if (record && options && input.value === record[field.key] && !options.some(option => (Array.isArray(option) ? option[0] : option) === input.value)) continue;
       if(field.type==="checkbox")body[field.key]=input.checked;
       else if(field.type==="number")body[field.key]=input.value===""?0:Number(input.value);
       else body[field.key]=input.value.trim();
     }
+    if(name==="passes"&&body.od===body.do){$("#record-error").textContent="Godzina wyjścia i powrotu muszą być różne.";return;}
     const submit=$("#record-submit");submit.disabled=true;submit.textContent="Zapisywanie…";$("#record-error").textContent="";
     try{
       const result=await api("/api/"+name+(record?"/"+encodeURIComponent(record.id||record.userId):""),{method:record?"PATCH":"POST",body:JSON.stringify(body)});
       $("#record-dialog").close();
-      const savedMessage=name==="payouts"?"Zapisano wpis w ewidencji wypłat. Pieniądze nie zostały wysłane.":name==="prisoners"?"Zapisano osadzonego w ewidencji.":"Zapisano wpis w module „"+resources[name].label+"”.";
+      const savedMessage=name==="passes"?"Złożono wniosek o przepustkę. Oczekuje na decyzję administratora.":name==="payouts"?"Zapisano wpis w ewidencji wypłat. Pieniądze nie zostały wysłane.":name==="prisoners"?"Zapisano osadzonego w ewidencji.":"Zapisano wpis w module „"+resources[name].label+"”.";
       showNotificationOutcome(savedMessage,result.notification);
+      if(name==="passes"){passStatusFilter="oczekuje";navigate("passes");}
       await refresh();
-    }catch(error){$("#record-error").textContent=error.message;}finally{submit.disabled=false;submit.textContent=name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";}
+    }catch(error){$("#record-error").textContent=error.message;}finally{submit.disabled=false;submit.textContent=name==="passes"?"Złóż wniosek":name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";}
   }
   function confirmRemove(name,record){
     if(!canWrite())return;
@@ -847,6 +943,8 @@
   $("#record-dialog").addEventListener("close",()=>{for(const input of $("#record-dialog").querySelectorAll('input[type="password"]'))input.value="";activeForm=null;});
   $("#confirm-cancel").addEventListener("click",()=>$("#confirm-dialog").close());$("#confirm-delete").addEventListener("click",removeRecord);
   $("#publish-cancel").addEventListener("click",()=>$("#publish-dialog").close());$("#publish-send").addEventListener("click",publishRecord);
+  $("#pass-decision-cancel").addEventListener("click",()=>$("#pass-decision-dialog").close());$("#pass-decision-submit").addEventListener("click",decidePass);
+  $("#pass-decision-dialog").addEventListener("close",()=>{if(!$("#pass-decision-dialog").open){pendingPassDecision=null;$("#pass-decision-description").textContent="";}});
   window.addEventListener("hashchange",()=>{const view=location.hash.slice(1);if(authenticated&&(view==="overview"||resources[view]))navigate(view);});
   function tick(){$("#topbar-date").textContent=dateFormat.format(new Date())+" · "+timeFormat.format(new Date());}tick();setInterval(tick,30000);
   setInterval(()=>{if(authenticated&&!document.hidden&&!dialogsOpen())refresh(true);},20000);

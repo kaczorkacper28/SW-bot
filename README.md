@@ -2,6 +2,7 @@
 
 Jeden bot Discord z modułami SW oraz osobny ciemny panel administracyjny.
 Panel obsługuje osobne konta, role i automatyczne powiadomienia na Discordzie o zmianach we wszystkich modułach danych.
+Zakładka **Przepustki** obejmuje wnioski, listę oczekujących i decyzje wspólne z komendami Discorda.
 Dostęp przez internet z Termuxa: `npm run panel:share` (pakiet `cloudflared`).
 Instrukcja panelu, uruchamiania i zakres operacji: **[PANEL.md](PANEL.md)**.
 

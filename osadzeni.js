@@ -18,6 +18,8 @@ const management = require("./services/management");
 const validate = require("./services/domain-validation");
 const storage = require("./services/storage");
 const { createPrisonerNotifications } = require("./services/discord-notifications");
+const { createPassNotifications } = require("./services/pass-notifications");
+const { buildPassEmbed, buildPassButtons } = require("./services/pass-content");
 const fs = require("fs");
 const path = require("path");
 
@@ -50,10 +52,20 @@ const DATA_DIR = process.env.SW_DATA_DIR || path.join(__dirname, "data");
 const DATA_FILE = path.join(DATA_DIR, "osadzeni.json");
 
 function loadDatabase() {
-    return storage.readJson(DATA_FILE, { nextId: 1, osadzeni: [], przepustki: [] }, data =>
-        Array.isArray(data.osadzeni) && Array.isArray(data.przepustki) && Number.isSafeInteger(data.nextId) && data.nextId > 0);
+    return storage.readJson(DATA_FILE, { nextId: 1, nextPassId: 1, osadzeni: [], przepustki: [] }, data =>
+        Array.isArray(data.osadzeni) && Array.isArray(data.przepustki) && Number.isSafeInteger(data.nextId) && data.nextId > 0 &&
+        (data.nextPassId === undefined || (Number.isSafeInteger(data.nextPassId) && data.nextPassId > 0)));
 }
 const db = loadDatabase();
+const largestPassId = db.przepustki.reduce((largest, item) => {
+    const match = /^P-(\d+)$/i.exec(String(item?.id || ""));
+    if (!match) return largest;
+    const value = Number(match[1]);
+    if (!Number.isSafeInteger(value) || value >= Number.MAX_SAFE_INTEGER) throw new Error("Nieprawidłowy numer istniejącej przepustki; bazę zachowano bez zmian.");
+    return Math.max(largest, value);
+}, 0);
+// Preserve legacy records and a counter that survives deletion of earlier requests.
+db.nextPassId = Math.max(db.nextPassId || 1, largestPassId + 1);
 function saveDatabase() { storage.writeJson(DATA_FILE, db); }
 
 function registerOsadzeniModule(client) {
@@ -66,17 +78,36 @@ const notifications = createPrisonerNotifications({
     buildCard: item => buildOsadzonyEmbed(item, false), buildButtons: buildTimerButtons,
 });
 management.registerNotifications(notifications);
+const passNotifications = createPassNotifications({
+    client, getRecord: getPass, dataDir: DATA_DIR,
+    saveReference(id, reference) {
+        const pass = getPass(id);
+        if (pass) { Object.assign(pass, reference); saveDatabase(); }
+    },
+    buildCard: buildPassEmbed, buildButtons: buildPassButtons,
+    refreshPrisoner(id) {
+        const prisoner = getOsadzony(id);
+        if (prisoner) return refreshOsadzonyMessage(prisoner);
+    },
+});
+management.registerNotifications(passNotifications, "passes");
+management.registerResource("passes", {
+    list: () => db.przepustki.map(item => ({ ...item })),
+    create: createPass,
+    decide: decidePass,
+    afterMutation(action, item, actor) { return passNotifications.enqueue(action, item, actor); },
+});
 management.registerResource("prisoners", {
     list() { let changed = false; for (const item of db.osadzeni) if (ensureTimer(item)) changed = true; if (changed) saveDatabase(); return db.osadzeni.map(item => ({ ...item })); },
-    create(input, { actor = "panel" } = {}) {
-        const item = validatePrisoner(input);
+    create(input, { actor = "panel", role = "admin" } = {}) {
+        const item = validatePrisoner(input, undefined, { role });
         item.id = createOsadzonyId(); item.dodanyPrzez = actor; item.utworzono = new Date().toISOString();
         db.osadzeni.push(item); saveDatabase(); return { ...item };
     },
-    update(id, input) {
+    update(id, input, { role = "admin" } = {}) {
         const previous = validate.present(getOsadzony(id));
         if (input.id && input.id !== previous.id) validate.fail("Nie można zmienić ID osadzonego.");
-        const item = validatePrisoner(input, previous);
+        const item = validatePrisoner(input, previous, { role });
         Object.assign(previous, item); saveDatabase();
         return { ...previous };
     },
@@ -88,7 +119,10 @@ management.registerResource("prisoners", {
     },
     afterMutation(action, item, actor) { return notifications.enqueue(action, item, actor); }
 });
-function validatePrisoner(input, previous) {
+function validatePrisoner(input, previous, { role = "admin" } = {}) {
+    if (Object.hasOwn(input, "przepustka") && role !== "admin" && (previous || input.przepustka !== false)) {
+        validate.fail("Tylko administrator może zmieniać uprawnienie przepustki.", 403);
+    }
     const item = { ...(previous || {}), ...input };
     item.imie = validate.text(input.imie ?? input.name ?? previous?.imie, "imię i nazwisko", 150);
     item.paragraf = validate.text(input.paragraf ?? input.reason ?? previous?.paragraf, "paragraf", 500);
@@ -116,6 +150,63 @@ function validatePrisoner(input, previous) {
       uwagi:item.uwagi, poczatek:item.poczatek, koniec:item.koniec, remainingSeconds:item.remainingSeconds,
       paused:item.paused,timerStartedAt:item.timerStartedAt,czasKaryMinuty:item.czasKaryMinuty,
       czasZWyrokuMinuty:item.czasZWyrokuMinuty,przepustka:item.przepustka };
+}
+
+function getPass(id) {
+    return db.przepustki.find(item => typeof item?.id === "string" && item.id.toLowerCase() === String(id).toLowerCase());
+}
+
+function passInput(input, allowed) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) validate.fail("Nieprawidłowe dane wniosku o przepustkę.");
+    for (const key of Object.keys(input)) if (!allowed.includes(key)) validate.fail(`Niedozwolone pole wniosku: ${key}.`);
+}
+
+function createPass(input, { actor = "panel", role = "admin" } = {}) {
+    if (!["admin", "operator"].includes(role)) validate.fail("Nie masz uprawnień do składania wniosków o przepustkę.", 403);
+    passInput(input, ["osadzonyId", "od", "do", "powod", "miejsce"]);
+    const prisonerId = validate.text(input.osadzonyId, "ID osadzonego", 64);
+    const prisoner = validate.present(getOsadzony(prisonerId), "Nie znaleziono osadzonego.");
+    const start = validate.text(input.od, "początek przepustki", 5);
+    const end = validate.text(input.do, "koniec przepustki", 5);
+    if (!parseTime(start) || !parseTime(end)) validate.fail("Godziny przepustki muszą mieć format HH:MM.");
+    if (start === end) validate.fail("Początek i koniec przepustki muszą być różne.");
+    const reason = validate.text(input.powod, "powód przepustki", 1000);
+    const place = validate.text(input.miejsce, "miejsce przepustki", 200);
+    if (!Number.isSafeInteger(db.nextPassId) || db.nextPassId >= Number.MAX_SAFE_INTEGER) validate.fail("Wyczerpano zakres numerów przepustek.", 409);
+    const request = { id: `P-${String(db.nextPassId).padStart(3, "0")}`, osadzonyId: prisoner.id, osadzony: prisoner.imie,
+        od: start, do: end, powod: reason, miejsce: place, status: "oczekuje",
+        zlozyl: validate.text(String(actor), "wnioskodawcę", 128), utworzono: new Date().toISOString() };
+    const counter = db.nextPassId;
+    db.nextPassId++;
+    db.przepustki.push(request);
+    try { saveDatabase(); }
+    catch (error) { db.przepustki.splice(db.przepustki.indexOf(request), 1); db.nextPassId = counter; throw error; }
+    return { ...request };
+}
+
+function decidePass(id, input, { actor = "panel", role = "admin" } = {}) {
+    if (role !== "admin") validate.fail("Tylko administrator może rozpatrywać przepustki.", 403);
+    passInput(input, ["decision"]);
+    if (!["approve", "reject"].includes(input.decision)) validate.fail("Wybierz zatwierdzenie albo odrzucenie przepustki.");
+    const pass = validate.present(getPass(validate.text(id, "ID przepustki", 64)), "Nie znaleziono wniosku o przepustkę.");
+    if (pass.status !== "oczekuje") validate.fail("Ten wniosek został już rozpatrzony.", 409);
+    const prisoner = getOsadzony(pass.osadzonyId);
+    if (input.decision === "approve" && !prisoner) validate.fail("Nie znaleziono osadzonego; wniosku nie można zatwierdzić.", 404);
+    const reviewer = validate.text(String(actor), "osobę rozpatrującą", 128);
+    const previous = { ...pass };
+    const granted = prisoner?.przepustka;
+    pass.status = input.decision === "approve" ? "zatwierdzona" : "odrzucona";
+    pass.rozpatrzyl = reviewer;
+    pass.rozpatrzono = new Date().toISOString();
+    if (input.decision === "approve") prisoner.przepustka = true;
+    try { saveDatabase(); }
+    catch (error) {
+        for (const key of Object.keys(pass)) if (!Object.hasOwn(previous, key)) delete pass[key];
+        Object.assign(pass, previous);
+        if (prisoner) { if (granted === undefined) delete prisoner.przepustka; else prisoner.przepustka = granted; }
+        throw error;
+    }
+    return { ...pass };
 }
 
 function hasStaffRole(member) {
@@ -485,35 +576,27 @@ client.on("interactionCreate", async interaction => {
     // ==================================================
     if (interaction.isChatInputCommand() && interaction.commandName === "przepustka") {
         if (!hasPermission(interaction)) return interaction.reply({ content: "❌ Nie masz uprawnień.", ephemeral: true });
-        const id = interaction.options.getString("id");
-        const od = interaction.options.getString("od");
-        const doDate = interaction.options.getString("do");
-        const powod = interaction.options.getString("powod");
-        const miejsce = interaction.options.getString("miejsce");
-        const osadzony = getOsadzony(id);
-        if (!osadzony) return interaction.reply({ content: `❌ Nie znaleziono osadzonego **${id}**.`, ephemeral: true });
-        if (!parseTime(od) || !parseTime(doDate)) return interaction.reply({ content: "❌ Godziny przepustki muszą być w formacie `HH:MM`.", ephemeral: true });
-        const przepustkaId = `P-${String(db.przepustki.length + 1).padStart(3, "0")}`;
-        const przepustka = { id: przepustkaId, osadzonyId: osadzony.id, osadzony: osadzony.imie, od, do: doDate, powod, miejsce, status: "oczekuje", zlozyl: interaction.user.id, utworzono: new Date().toISOString() };
-        db.przepustki.push(przepustka); saveDatabase();
-        const embed = new EmbedBuilder().setTitle("🎫 WNIOSEK O PRZEPUSTKĘ")
-            .setDescription(`### 👤 ${osadzony.imie}\n**ID:** ${osadzony.id}`)
-            .addFields(
-                { name: "🎫 Numer wniosku", value: przepustkaId, inline: true },
-                { name: "🕐 Od", value: od, inline: true },
-                { name: "🕐 Do", value: doDate, inline: true },
-                { name: "📍 Miejsce", value: miejsce, inline: true },
-                { name: "📝 Powód", value: powod },
-                { name: "🟡 Status", value: "Oczekuje na decyzję" }
-            ).setTimestamp();
-        const buttons = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId(`przepustka_zgoda_${przepustkaId}`).setLabel("Zatwierdź").setEmoji("✅").setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`przepustka_odmowa_${przepustkaId}`).setLabel("Odrzuć").setEmoji("❌").setStyle(ButtonStyle.Danger)
-        );
-        const channel = interaction.guild.channels.cache.find(ch => ch.name === CHANNEL_PRZEPUSTKI && ch.isTextBased());
-        if (channel) await channel.send({ embeds: [embed], components: [buttons] });
-        await interaction.reply({ content: `✅ Wniosek **${przepustkaId}** został złożony.`, ephemeral: true });
-        await sendLog(interaction.guild, new EmbedBuilder().setTitle("🎫 NOWY WNIOSEK O PRZEPUSTKĘ").setDescription(`${interaction.user} złożył wniosek dla **${osadzony.imie} (${osadzony.id})**.`).addFields({ name: "ID wniosku", value: przepustkaId }).setTimestamp());
+        const deferred = typeof interaction.deferReply === "function" && typeof interaction.editReply === "function";
+        if (deferred) await interaction.deferReply({ ephemeral: true });
+        const reply = payload => deferred ? interaction.editReply(payload) : interaction.reply({ ...payload, ephemeral: true });
+        let request;
+        try {
+            request = createPass({ osadzonyId: interaction.options.getString("id"), od: interaction.options.getString("od"),
+                do: interaction.options.getString("do"), powod: interaction.options.getString("powod"), miejsce: interaction.options.getString("miejsce") },
+                { actor: interaction.user.id, role: "admin" });
+        } catch (error) { return reply({ content: `❌ ${error.message}`, allowedMentions: { parse: [] } }); }
+        management.recordDiscord("passes", request, interaction.user.id);
+        let publication;
+        try {
+            publication = await passNotifications.enqueue("create", request, interaction.user.id);
+        } catch (error) {
+            console.error("Wniosek zapisano, ale nie przygotowano kolejki karty przepustki:", error.message);
+            publication = { status: "failed", message: "Wniosek został zapisany, ale nie udało się zapisać kolejki karty. Sprawdź dziennik bota i kanał przepustek przed ponowieniem." };
+        }
+        await reply({ content: `✅ Wniosek **${request.id}** został złożony. ${publication.message}`, allowedMentions: { parse: [] } });
+        await sendLog(interaction.guild, new EmbedBuilder().setTitle("🎫 NOWY WNIOSEK O PRZEPUSTKĘ")
+            .setDescription(`${interaction.user} złożył wniosek dla **${request.osadzony} (${request.osadzonyId})**.`)
+            .addFields({ name: "ID wniosku", value: request.id }).setTimestamp());
         return;
     }
 
@@ -524,8 +607,15 @@ client.on("interactionCreate", async interaction => {
         if (!hasPermission(interaction)) return interaction.reply({ content: "❌ Nie masz uprawnień.", ephemeral: true });
         const oczekujace = db.przepustki.filter(p => p.status === "oczekuje");
         if (!oczekujace.length) return interaction.reply({ content: "📭 Brak oczekujących wniosków o przepustkę.", ephemeral: true });
-        const lista = oczekujace.map(p => `**${p.id}** • ${p.osadzony} (${p.osadzonyId})\n🕐 ${p.od} → ${p.do}\n📍 ${p.miejsce}\n📝 ${p.powod}`).join("\n\n");
-        return interaction.reply({ embeds: [new EmbedBuilder().setTitle("🎫 OCZEKUJĄCE PRZEPUSTKI").setDescription(lista).setTimestamp()], ephemeral: true });
+        const entries = [];
+        let length = 0;
+        for (const pass of oczekujace) {
+            const entry = `**${String(pass.id).slice(0, 64)}** • ${String(pass.osadzony || "Brak nazwiska").slice(0, 150)} (${String(pass.osadzonyId).slice(0, 64)})\n🕐 ${String(pass.od).slice(0, 5)} → ${String(pass.do).slice(0, 5)}\n📍 ${String(pass.miejsce || "Brak").slice(0, 200)}\n📝 ${String(pass.powod || "Brak").slice(0, 500)}`;
+            if (length + entry.length > 3700) break;
+            entries.push(entry); length += entry.length + 2;
+        }
+        const more = entries.length < oczekujace.length ? `\n\nPokazano ${entries.length} z ${oczekujace.length} wniosków. Pełna lista jest dostępna w panelu.` : "";
+        return interaction.reply({ embeds: [new EmbedBuilder().setTitle("🎫 OCZEKUJĄCE PRZEPUSTKI").setDescription(entries.join("\n\n") + more).setTimestamp()], ephemeral: true, allowedMentions: { parse: [] } });
     }
 
     // ==================================================
@@ -614,40 +704,28 @@ client.on("interactionCreate", async interaction => {
     // ==================================================
     if (interaction.isButton() && interaction.customId.startsWith("przepustka_")) {
         if (!hasPermission(interaction)) return interaction.reply({ content: "❌ Tylko uprawnione osoby mogą rozpatrywać przepustki.", ephemeral: true });
-        const [, action, id] = interaction.customId.split("_");
-        const przepustka = db.przepustki.find(p => p.id === id);
-        if (!przepustka) return interaction.reply({ content: "❌ Nie znaleziono tego wniosku.", ephemeral: true });
-        if (przepustka.status !== "oczekuje") return interaction.reply({ content: "❌ Ten wniosek został już rozpatrzony.", ephemeral: true });
-        const osadzony = getOsadzony(przepustka.osadzonyId);
-
-        if (action === "zgoda") {
-            przepustka.status = "zatwierdzona";
-            przepustka.rozpatrzyl = interaction.user.id;
-            if (osadzony) osadzony.przepustka = true;
-            saveDatabase();
-            const embed = new EmbedBuilder().setTitle("✅ PRZEPUSTKA ZATWIERDZONA").setDescription(`Wniosek **${przepustka.id}** został zatwierdzony.`).addFields(
-                { name: "👤 Osadzony", value: `${przepustka.osadzony} (${przepustka.osadzonyId})` },
-                { name: "🕐 Termin", value: `${przepustka.od} → ${przepustka.do}` },
-                { name: "👮 Zatwierdził", value: `${interaction.user}` }
-            ).setTimestamp();
-            await interaction.update({ embeds: [embed], components: [] });
-            if (osadzony) await refreshOsadzonyMessage(osadzony);
-            await sendLog(interaction.guild, embed);
-            return;
+        const match = /^przepustka_(zgoda|odmowa)_(.+)$/.exec(interaction.customId);
+        if (!match) return interaction.reply({ content: "❌ Nieprawidłowy przycisk przepustki.", ephemeral: true });
+        const deferred = typeof interaction.deferUpdate === "function" && typeof interaction.editReply === "function" && typeof interaction.followUp === "function";
+        if (deferred) await interaction.deferUpdate();
+        let request;
+        try {
+            request = decidePass(match[2], { decision: match[1] === "zgoda" ? "approve" : "reject" },
+                { actor: interaction.user.id, role: "admin" });
+        } catch (error) {
+            const response = { content: `❌ ${error.message}`, ephemeral: true, allowedMentions: { parse: [] } };
+            return deferred ? interaction.followUp(response) : interaction.reply(response);
         }
-
-        if (action === "odmowa") {
-            przepustka.status = "odrzucona";
-            przepustka.rozpatrzyl = interaction.user.id;
-            saveDatabase();
-            const embed = new EmbedBuilder().setTitle("❌ PRZEPUSTKA ODRZUCONA").setDescription(`Wniosek **${przepustka.id}** został odrzucony.`).addFields(
-                { name: "👤 Osadzony", value: `${przepustka.osadzony} (${przepustka.osadzonyId})` },
-                { name: "👮 Odrzucił", value: `${interaction.user}` }
-            ).setTimestamp();
-            await interaction.update({ embeds: [embed], components: [] });
-            await sendLog(interaction.guild, embed);
-            return;
-        }
+        management.recordDiscord("passes", request, interaction.user.id);
+        await passNotifications.withRecordLock(request.id, () => {
+            const current = getPass(request.id) || { ...request, status: "anulowana" };
+            const payload = { embeds: [buildPassEmbed(current)], components: buildPassButtons(current), allowedMentions: { parse: [] } };
+            return deferred ? interaction.editReply(payload) : interaction.update(payload);
+        });
+        const prisoner = getOsadzony(request.osadzonyId);
+        if (prisoner) await refreshOsadzonyMessage(prisoner);
+        await sendLog(interaction.guild, buildPassEmbed(request));
+        return;
     }
 });
 

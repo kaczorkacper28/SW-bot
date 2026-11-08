@@ -10,7 +10,7 @@ const { createAuthStore } = require("./auth-store");
 const MAX_BODY = 65536;
 const SESSION_AGE = 8 * 60 * 60 * 1000;
 const COOKIE = "sw_panel_session";
-const RESOURCES = "members|prisoners|ranks|reports|calls|documents|proposals|payouts";
+const RESOURCES = "members|prisoners|passes|ranks|reports|calls|documents|proposals|payouts";
 
 function send(response, status, value) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
@@ -159,15 +159,25 @@ function createPanelServer(options = {}) {
         if (isMutation && session.role === "viewer") return send(response, 403, { error:"Rola viewer pozwala wyłącznie przeglądać dane." });
         const retryNotification = request.method === "POST" && /^\/api\/notifications\/[^/]+\/retry$/.test(url.pathname);
         if (retryNotification && session.role !== "admin") return send(response, 403, { error:"Ponowienie powiadomienia wymaga roli administratora." });
-        const allowed = (request.method === "GET" && ["/api/state","/api/notifications"].includes(url.pathname)) || (["POST", "PATCH", "DELETE"].includes(request.method) && mutation.test(url.pathname)) || (request.method === "POST" && url.pathname === "/api/actions/publish") || retryNotification;
+        const passDecision = request.method === "POST" && /^\/api\/passes\/[^/]+\/decision$/.test(url.pathname);
+        if (passDecision && session.role !== "admin") return send(response, 403, { error:"Decyzja o przepustce wymaga roli administratora." });
+        const allowed = (request.method === "GET" && ["/api/state","/api/notifications"].includes(url.pathname)) || (["POST", "PATCH", "DELETE"].includes(request.method) && mutation.test(url.pathname)) || (request.method === "POST" && url.pathname === "/api/actions/publish") || retryNotification || passDecision;
         if (!allowed) return send(response, 404, { error: "Nieznane API." });
         let key;
         try { key = fs.readFileSync(path.join(bridgeDir, "panel-bridge.key"), "utf8").trim(); }
         catch (error) { if (error.code === "ENOENT") return send(response, 503, { error: "Bot jest wyłączony. Uruchom npm start lub npm run start:offline." }); throw error; }
         const body = isMutation ? await readBody(request) : undefined;
+        if (session.role !== "admin" && ["POST", "PATCH"].includes(request.method) && /^\/api\/prisoners(?:\/[^/]+)?$/.test(url.pathname)) {
+          let input;
+          try { input = JSON.parse(body.toString("utf8")); }
+          catch { return send(response, 400, { error: "Nieprawidłowy obiekt JSON." }); }
+          if (input && Object.hasOwn(input, "przepustka") && (request.method === "PATCH" || input.przepustka !== false)) {
+            return send(response, 403, { error: "Zmiana udzielonej przepustki wymaga administratora. Złóż wniosek w zakładce Przepustki." });
+          }
+        }
         const upstream = http.request({
           hostname: "127.0.0.1", port: bridgePort, method: request.method, path: url.pathname,
-          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Panel-User": session.username, ...(body ? { "Content-Length": body.length } : {}) },
+          headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Panel-User": session.username, "X-Panel-Role": session.role, ...(body ? { "Content-Length": body.length } : {}) },
           timeout: 10000,
         }, bridge => {
           response.writeHead(bridge.statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });

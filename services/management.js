@@ -10,12 +10,12 @@ const { buildReportMessage } = require("./report-content");
 const DATA_DIR = process.env.MANAGEMENT_DATA_DIR || process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
 const RECORDS_FILE = path.join(DATA_DIR, "panel-records.json");
 const KEY_FILE = path.join(DATA_DIR, "panel-bridge.key");
-const RESOURCES = ["members", "prisoners", "ranks", "reports", "calls", "documents", "proposals", "payouts"];
+const RESOURCES = ["members", "prisoners", "passes", "ranks", "reports", "calls", "documents", "proposals", "payouts"];
 const registry = new Map();
 let server;
 let serverReady;
 let currentClient;
-let notifications;
+const notificationProviders = new Map();
 let resourceNotifications;
 
 fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
@@ -25,6 +25,7 @@ if (fs.existsSync(RECORDS_FILE)) {
     const saved = JSON.parse(fs.readFileSync(RECORDS_FILE, "utf8"));
     if (!saved || Array.isArray(saved) || typeof saved !== "object") throw new Error("nieprawidłowy obiekt");
     for (const name of Object.keys(records)) {
+      if (name === "passes" && saved[name] === undefined) continue;
       if (!Array.isArray(saved[name])) throw new Error(`pole ${name} nie jest listą`);
       records[name] = saved[name];
     }
@@ -101,11 +102,15 @@ function registerResource(name, handlers) {
   registry.set(name, handlers);
 }
 
-function registerNotifications(provider) { notifications = provider; }
+function registerNotifications(provider, resource = "prisoners") {
+  if (!RESOURCES.includes(resource)) throw new Error("Invalid notification resource");
+  notificationProviders.set(resource, provider);
+}
 
 function notificationList() {
-  return [...(notifications?.list() || []).map(item => ({ resource: "prisoners", ...item })), ...(resourceNotifications?.list() || [])]
-    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))).slice(0, 200);
+  const native = [...notificationProviders].flatMap(([resource, provider]) => provider.list().map(item => ({ resource, ...item })));
+  return [...native, ...(resourceNotifications?.list() || [])]
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))).slice(0, 300);
 }
 
 function json(response, status, value) {
@@ -215,14 +220,16 @@ async function state() {
   };
 }
 
-async function mutate(resource, method, id, input, actor) {
+async function mutate(resource, method, id, input, actor, role = "admin") {
   const handlers = registry.get(resource);
+  if (resource === "passes" && !handlers) throw Object.assign(new Error("Moduł przepustek jest wyłączony."), { status: 503 });
   const action = method === "POST" ? "create" : method === "PATCH" ? "update" : "remove";
   if (action !== "remove") input = validateInput(resource, input, action === "create");
   let item;
   if (handlers) {
     if (typeof handlers[action] !== "function") throw Object.assign(new Error("Operacja niedostępna."), { status: 405 });
-    item = action === "create" ? await handlers.create(input, { actor: String(actor).slice(0, 64) }) : await handlers[action](id, input);
+    const context = { actor: String(actor).slice(0, 64), role };
+    item = action === "create" ? await handlers.create(input, context) : await handlers[action](id, input, context);
     if (item == null || item === false) throw Object.assign(new Error("Nie znaleziono wpisu."), { status: 404 });
   } else if (action === "create") {
     const now = new Date().toISOString();
@@ -239,6 +246,11 @@ async function mutate(resource, method, id, input, actor) {
   }
   audit(resource, action, typeof item === "object" ? item : { id }, actor);
   persist();
+  const notification = await notifyMutation(resource, action, item, actor, handlers);
+  return { record: item, ...(notification ? { notification } : {}) };
+}
+
+async function notifyMutation(resource, action, item, actor, handlers) {
   let notification;
   if (typeof handlers?.afterMutation === "function" || (resource !== "prisoners" && resourceNotifications)) {
     try {
@@ -248,9 +260,20 @@ async function mutate(resource, method, id, input, actor) {
     }
     catch (error) {
       console.error("Zmiana została zapisana, ale powiadomienie Discord nie zostało przygotowane:", error.message);
-      notification = { resource, recordId: item?.id || id, action, status: "failed", canRetry: false, message: "Zapisano zmianę, ale nie udało się zapisać kolejki powiadomień. Sprawdź dziennik bota i Discord przed ponowieniem." };
+      notification = { resource, recordId: item?.id, action, status: "failed", canRetry: false, message: "Zapisano zmianę, ale nie udało się zapisać kolejki powiadomień. Sprawdź dziennik bota i Discord przed ponowieniem." };
     }
   }
+  return notification;
+}
+
+async function decidePass(id, input, actor, role) {
+  if (role !== "admin") throw Object.assign(new Error("Decyzja o przepustce wymaga roli administratora."), { status: 403 });
+  const handlers = registry.get("passes");
+  if (typeof handlers?.decide !== "function") throw Object.assign(new Error("Moduł przepustek jest wyłączony."), { status: 503 });
+  const item = await handlers.decide(id, input, { actor: String(actor).slice(0, 64), role });
+  audit("passes", "update", item, actor);
+  persist();
+  const notification = await notifyMutation("passes", "update", item, actor, handlers);
   return { record: item, ...(notification ? { notification } : {}) };
 }
 
@@ -325,7 +348,7 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
   currentClient = client;
   resourceNotifications = createResourceNotifications({ client, dataDir: DATA_DIR,
     getFallbackChannelId: resource => registry.get(resource)?.notificationChannelId?.() });
-  notifications?.start();
+  for (const provider of notificationProviders.values()) provider.start();
   resourceNotifications.start();
   const key = getBridgeKey();
   server = http.createServer(async (request, response) => {
@@ -339,8 +362,23 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
       if (request.method === "POST" && retryNotification) {
         const notificationId = decodeURIComponent(retryNotification[1]);
         if (resourceNotifications?.has(notificationId)) return json(response, 200, { notification: await resourceNotifications.retry(notificationId) });
-        if (!notifications) return json(response, 404, { error: "Nie znaleziono powiadomienia." });
-        return json(response, 200, { notification: { resource: "prisoners", ...await notifications.retry(notificationId) } });
+        for (const [resource, provider] of notificationProviders) {
+          if (provider.has?.(notificationId) || provider.list().some(item => item.id === notificationId)) {
+            return json(response, 200, { notification: { resource, ...await provider.retry(notificationId) } });
+          }
+        }
+        return json(response, 404, { error: "Nie znaleziono powiadomienia." });
+      }
+      const actor = request.headers["x-panel-user"] || "panel";
+      // The private bearer key already grants bridge access. Older private clients
+      // omit the role; the public proxy always supplies the authenticated role.
+      const role = request.headers["x-panel-role"] ?? "admin";
+      if (!["admin", "operator", "viewer"].includes(role)) return json(response, 403, { error: "Nieprawidłowa rola panelu." });
+      const passDecision = /^\/api\/passes\/([^/]+)\/decision$/.exec(url.pathname);
+      if (passDecision && request.method === "POST") {
+        const passId = decodeURIComponent(passDecision[1]);
+        if (passId.length > 128) return json(response, 400, { error: "Nieprawidłowy identyfikator." });
+        return json(response, 200, await decidePass(passId, await readJson(request), actor, role));
       }
       if (request.method === "POST" && url.pathname === "/api/actions/publish") {
         return json(response, 200, { record: await publish(await readJson(request), request.headers["x-panel-user"] || "panel") });
@@ -354,7 +392,7 @@ async function startManagement({ client, host = "127.0.0.1", port = Number(proce
         return json(response, 405, { error: "Niedozwolona metoda." });
       }
       const input = request.method === "DELETE" ? {} : await readJson(request);
-      const result = await mutate(resource, request.method, id, input, request.headers["x-panel-user"] || "panel");
+      const result = await mutate(resource, request.method, id, input, actor, role);
       return json(response, request.method === "POST" ? 201 : 200, { ...(request.method === "DELETE" ? { ok: true } : {}), ...result });
     } catch (error) {
       if (!error.status || error.status >= 500) console.error("Management request failed:", error.message);
@@ -385,7 +423,7 @@ async function stop() {
     serverReady = undefined;
     await new Promise((resolve, reject) => active.close(error => error ? reject(error) : resolve()));
   }
-  await notifications?.stop();
+  for (const provider of notificationProviders.values()) await provider.stop();
   await resourceNotifications?.stop();
 }
 
