@@ -3,7 +3,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const { Collection, EmbedBuilder } = require("discord.js");
-const { resolveDestination, buildNotice } = require("../services/notification-content");
+const { resolveDestination, buildNotice, NotificationConfigurationError, notificationConfigurationDiagnostic } = require("../services/notification-content");
 
 const guildId = "100000000000000001";
 const foreignGuildId = "100000000000000002";
@@ -118,6 +118,134 @@ test("ambiguous aliases reject even if only one matching channel has permission"
   const client = clientFor([first,second]);
   await assert.rejects(resolveDestination(client,"reports",{ env:envFor({}) }));
   assert.equal(await resolveDestination(client,"reports",{ env:envFor({ PANEL_REPORTS_CHANNEL_ID:first.id }) }),first);
+});
+
+function diagnostic(code, setting, resource, message) {
+  return error => {
+    assert.ok(error instanceof NotificationConfigurationError);
+    assert.equal(error.name,"NotificationConfigurationError");
+    assert.equal(error.code,code);
+    assert.equal(error.setting,setting);
+    assert.equal(error.resource,resource);
+    if (message) assert.match(error.message,message);
+    assert.ok(!error.message.includes(channelId));
+    assert.ok(!error.message.includes(guildId));
+    return true;
+  };
+}
+
+test("member destination errors give the log-channel command only when an explicit panel setting does not override it",async() => {
+  await assert.rejects(resolveDestination(clientFor([]),"members",{ env:envFor({}) }),error => {
+    diagnostic("CHANNEL_MISSING","PANEL_MEMBERS_CHANNEL_ID","members",/\/sw-ustaw-logi/)(error);
+    assert.match(error.message,/kadry/);
+    assert.match(error.message,/funkcjonariusze/);
+    return true;
+  });
+  await assert.rejects(resolveDestination(clientFor([]),"members",{ env:envFor({}),fallbackChannelId:"invalid-saved-channel" }),
+    diagnostic("INVALID_CHANNEL_ID","PANEL_MEMBERS_CHANNEL_ID","members",/\/sw-ustaw-logi/));
+  const alias = channel({ name:"kadry" });
+  await assert.rejects(resolveDestination(clientFor([alias]),"members",{
+    env:envFor({ PANEL_MEMBERS_CHANNEL_ID:"PRIVATE_ENV_VALUE_MUST_NOT_APPEAR" }),fallbackChannelId:alias.id,
+  }),error => {
+    diagnostic("INVALID_CHANNEL_ID","PANEL_MEMBERS_CHANNEL_ID","members",/PANEL_MEMBERS_CHANNEL_ID/)(error);
+    assert.doesNotMatch(error.message,/sw-ustaw-logi|PRIVATE_ENV_VALUE_MUST_NOT_APPEAR/);
+    return true;
+  });
+});
+
+test("typed diagnostics distinguish guild access, missing configured channels, wrong ownership and unsupported channel type",async() => {
+  await assert.rejects(resolveDestination(clientFor([]),"reports",{ env:{ GUILD_ID:"invalid" } }),
+    diagnostic("INVALID_GUILD_ID","GUILD_ID","reports",/GUILD_ID/));
+  const unavailable = clientFor([]);
+  unavailable.guilds.cache.clear();
+  unavailable.guilds.fetch = async() => null;
+  await assert.rejects(resolveDestination(unavailable,"reports",{ env:envFor({}) }),
+    diagnostic("GUILD_UNAVAILABLE","GUILD_ID","reports",/dostępu/));
+  await assert.rejects(resolveDestination(clientFor([]),"reports",{ env:envFor({ PANEL_REPORTS_CHANNEL_ID:channelId }) }),
+    diagnostic("CHANNEL_UNAVAILABLE","PANEL_REPORTS_CHANNEL_ID","reports",/odczytać wskazanego kanału/));
+  await assert.rejects(resolveDestination(clientFor([channel({ owner:foreignGuildId })]),"reports",{ env:envFor({ PANEL_REPORTS_CHANNEL_ID:channelId }) }),
+    diagnostic("CHANNEL_WRONG_GUILD","PANEL_REPORTS_CHANNEL_ID","reports",/innego serwera/));
+  await assert.rejects(resolveDestination(clientFor([channel({ type:2 })]),"reports",{ env:envFor({ PANEL_REPORTS_CHANNEL_ID:channelId }) }),
+    diagnostic("CHANNEL_NOT_TEXT","PANEL_REPORTS_CHANNEL_ID","reports",/wiadomości tekstowych/));
+  await assert.rejects(resolveDestination(clientFor([]),"reports",{ env:envFor({ REPORT_CHANNEL_ID:"invalid" }) }),
+    diagnostic("INVALID_CHANNEL_ID","REPORT_CHANNEL_ID","reports",/REPORT_CHANNEL_ID/));
+});
+
+test("alias diagnostics list only the known normalized names and require an unambiguous channel setting",async() => {
+  await assert.rejects(resolveDestination(clientFor([]),"reports",{ env:envFor({}) }),
+    diagnostic("CHANNEL_MISSING","PANEL_REPORTS_CHANNEL_ID","reports",/raporty, raportysluzbowe/));
+  const matches = [channel({ name:"raporty" }),channel({ id:"100000000000000071",name:"raporty służbowe" })];
+  await assert.rejects(resolveDestination(clientFor(matches),"reports",{ env:envFor({}) }),
+    diagnostic("CHANNEL_AMBIGUOUS","PANEL_REPORTS_CHANNEL_ID","reports",/jednoznaczny.*PANEL_REPORTS_CHANNEL_ID/));
+});
+
+test("permission diagnostics name each missing permission and distinguish an unavailable permission lookup",async() => {
+  const labels = { ViewChannel:"Wyświetlanie kanału",SendMessages:"Wysyłanie wiadomości",EmbedLinks:"Osadzanie linków" };
+  for (const [missing,label] of Object.entries(labels)) {
+    const item = channel();
+    const checked = [];
+    item.permissionsFor = () => ({ has:permissions => { checked.push(permissions); return !permissions.includes(missing); } });
+    await assert.rejects(resolveDestination(clientFor([item]),"members",{ env:envFor({ PANEL_MEMBERS_CHANNEL_ID:item.id }) }),error => {
+      diagnostic("MISSING_PERMISSIONS","PANEL_MEMBERS_CHANNEL_ID","members")(error);
+      assert.ok(error.message.includes(label));
+      for (const [permission,other] of Object.entries(labels)) if (permission !== missing) assert.ok(!error.message.includes(other));
+      return true;
+    });
+    assert.deepEqual(checked,[["ViewChannel"],["SendMessages"],["EmbedLinks"]]);
+  }
+  for (const result of [null,{}]) {
+    const item = channel();
+    item.permissionsFor = () => result;
+    await assert.rejects(resolveDestination(clientFor([item]),"members",{ env:envFor({ PANEL_MEMBERS_CHANNEL_ID:item.id }) }),
+      diagnostic("PERMISSIONS_UNAVAILABLE","PANEL_MEMBERS_CHANNEL_ID","members",/sprawdzić uprawnień/));
+  }
+});
+
+test("raw SDK error text is replaced by safe typed diagnostics at guild, channel, list and permission lookups",async() => {
+  const marker = ["A".repeat(26),"B".repeat(6),"C".repeat(32)].join(".");
+  const failure = async() => { throw new Error(`SDK leaked fake token ${marker}`); };
+  const guildFailure = clientFor([]);
+  guildFailure.guilds.cache.clear(); guildFailure.guilds.fetch = failure;
+  const channelFailure = clientFor([]);
+  channelFailure.guilds.cache.get(guildId).channels.fetch = failure;
+  const listFailure = clientFor([]);
+  listFailure.guilds.cache.get(guildId).channels.fetch = failure;
+  const item = channel();
+  item.permissionsFor = () => { throw new Error(marker); };
+  const cases = [
+    [guildFailure,envFor({}),"GUILD_UNAVAILABLE","GUILD_ID"],
+    [channelFailure,envFor({ PANEL_REPORTS_CHANNEL_ID:channelId }),"CHANNEL_UNAVAILABLE","PANEL_REPORTS_CHANNEL_ID"],
+    [listFailure,envFor({}),"CHANNELS_UNAVAILABLE","PANEL_REPORTS_CHANNEL_ID"],
+    [clientFor([item]),envFor({ PANEL_REPORTS_CHANNEL_ID:channelId }),"PERMISSIONS_UNAVAILABLE","PANEL_REPORTS_CHANNEL_ID"],
+  ];
+  for (const [client,env,code,setting] of cases) {
+    await assert.rejects(resolveDestination(client,"reports",{ env }),error => {
+      diagnostic(code,setting,"reports")(error);
+      assert.ok(!error.message.includes(marker));
+      assert.ok(!error.stack.includes(marker));
+      assert.equal(error.cause,undefined);
+      return true;
+    });
+  }
+});
+
+test("persisted diagnostics allow only known code, resource and related setting without accepting message text",() => {
+  const error = new NotificationConfigurationError("CHANNEL_MISSING","members");
+  const expected = { code:"CHANNEL_MISSING",setting:"PANEL_MEMBERS_CHANNEL_ID",resource:"members" };
+  assert.deepEqual(notificationConfigurationDiagnostic(error),expected);
+  const stored = { ...expected,message:"PRIVATE_MESSAGE_MUST_NOT_APPEAR",extra:"PRIVATE_EXTRA" };
+  assert.deepEqual(notificationConfigurationDiagnostic(stored),expected);
+  assert.notEqual(notificationConfigurationDiagnostic(stored),stored);
+  assert.deepEqual(notificationConfigurationDiagnostic({ code:"GUILD_UNAVAILABLE",setting:"GUILD_ID",resource:"reports" }),
+    { code:"GUILD_UNAVAILABLE",setting:"GUILD_ID",resource:"reports" });
+  assert.deepEqual(notificationConfigurationDiagnostic({ code:"CHANNEL_UNAVAILABLE",setting:"REPORT_CHANNEL_ID",resource:"reports" }),
+    { code:"CHANNEL_UNAVAILABLE",setting:"REPORT_CHANNEL_ID",resource:"reports" });
+  for (const invalid of [null,[],{}, { ...expected,code:"PRIVATE_BAD_CODE" }, { ...expected,resource:"users" },
+    { ...expected,setting:"TOKEN" }, { ...expected,setting:"REPORT_CHANNEL_ID" }, { ...expected,setting:"GUILD_ID" },
+    { code:"GUILD_UNAVAILABLE",setting:"PANEL_REPORTS_CHANNEL_ID",resource:"reports" },
+    { get code() { throw new Error("PRIVATE_GETTER"); } }]) {
+    assert.equal(notificationConfigurationDiagnostic(invalid),undefined);
+  }
 });
 
 const snapshots = {

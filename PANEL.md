@@ -240,6 +240,24 @@ bota, a restart nie usuwa oczekujących wpisów. Niepotwierdzona wysyłka jest b
 przed powtórzeniem: sprawdź wtedy kanał Discord. Dane kolejek wymagają takiej samej
 kopii zapasowej jak pozostałe pliki w `data/`.
 
+### Zapisano funkcjonariusza, ale wiadomość nie dotarła
+
+W Discordzie wybierz komendę **`/sw-ustaw-logi`** aplikacji **SW Bot** i wskaż
+docelowy kanał tekstowy. Bot potrzebuje tam uprawnień **Wyświetlanie kanału**,
+**Wysyłanie wiadomości** i **Osadzanie linków**. Komenda sprawdza wybrany kanał
+przed zapisaniem ustawienia; niepoprawny wybór zachowuje dotychczasowy kanał.
+
+Po poprawieniu ustawienia wróć do panelu i wybierz **Ponów wysyłkę** przy
+nieudanym powiadomieniu. Kanał zapisany tą komendą jest odczytywany przy każdej
+próbie, więc sama zmiana kanału nie wymaga restartu. Jeżeli w `.env` ustawiono
+`PANEL_MEMBERS_CHANNEL_ID`, ta wartość ma pierwszeństwo przed komendą;
+popraw ją w pliku i uruchom bota ponownie.
+
+Historia powiadomień pokazuje konkretną przyczynę: brak kanału, kilka pasujących
+kanałów, inny serwer, nieprawidłowe ID albo brakujące uprawnienia. Nowe komunikaty
+konfiguracyjne wymieniają właściwe ustawienie lub komendę, a surowe odpowiedzi
+Discorda i wartości sekretów nie są kopiowane do komunikatów.
+
 Karta wniosku w kanale przepustek ma przyciski zatwierdzenia i odrzucenia.
 Po decyzji karta zachowuje dane wniosku i pokazuje wynik; przyciski znikają.
 Przy braku potwierdzenia wysyłki sprawdź Discord przed ponowieniem. Zapis wniosku

@@ -3,6 +3,7 @@
 const path = require("node:path");
 const crypto = require("node:crypto");
 const storage = require("./storage");
+const { NotificationConfigurationError, notificationConfigurationDiagnostic } = require("./notification-content");
 
 const FIELDS = {
   members: ["userId", "name", "number", "rank", "corps", "plus", "minus", "reprimands"],
@@ -54,8 +55,10 @@ function createResourceNotifications({ client, getFallbackChannelId = () => unde
             : event.state === "sending" ? "Zapisano zmianę. Wysyłka do Discorda jest w toku."
               : client.isReady?.() ? "Zapisano zmianę. Powiadomienie czeka w kolejce na wysyłkę."
                 : "Zapisano zmianę. Powiadomienie czeka na połączenie bota z Discordem.";
+    const diagnostic = event.state === "failed" ? notificationConfigurationDiagnostic(event.diagnostic) : undefined;
     return { id: event.id, resource: event.resource, recordId: event.recordId, action: event.action,
       actor: event.actor, createdAt: event.createdAt, status, message,
+      ...(diagnostic?.resource === event.resource ? { diagnostic } : {}),
       canRetry: ["pending", "failed"].includes(event.state) && !event.blockedBy };
   }
 
@@ -74,11 +77,18 @@ function createResourceNotifications({ client, getFallbackChannelId = () => unde
         nonce: crypto.createHash("sha256").update(`panel-notice:${event.id}`).digest("hex").slice(0, 25), enforceNonce: true };
     } catch (error) {
       event.state = "failed";
-      event.error = "Sprawdź konfigurację kanału tego modułu oraz dostęp i uprawnienia bota na serwerze Discord.";
+      if (error instanceof NotificationConfigurationError && error.resource === event.resource) {
+        event.error = error.message;
+        event.diagnostic = notificationConfigurationDiagnostic(error);
+      } else {
+        event.error = "Sprawdź konfigurację kanału tego modułu oraz dostęp i uprawnienia bota na serwerze Discord.";
+        delete event.diagnostic;
+      }
       saveFailure(event, error);
       return;
     }
     if (!client.isReady?.()) return;
+    delete event.diagnostic;
     event.state = "sending";
     try { persist(); }
     catch (error) {
@@ -104,6 +114,7 @@ function createResourceNotifications({ client, getFallbackChannelId = () => unde
     event.discordMessageId = message.id;
     event.state = "sent";
     delete event.error;
+    delete event.diagnostic;
     try { persist(); }
     catch (error) {
       // The remote write succeeded, so repeating it after a failed checkpoint is unsafe.
@@ -163,6 +174,7 @@ function createResourceNotifications({ client, getFallbackChannelId = () => unde
     if (event.state === "sent") return outcome(event);
     event.state = "pending";
     delete event.error;
+    delete event.diagnostic;
     persist();
     await settleBriefly();
     return outcome(event);

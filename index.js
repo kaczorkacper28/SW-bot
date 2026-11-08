@@ -216,7 +216,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("sw-ustaw-logi")
     .setDescription("Ustaw kanał, na którym będą pojawiać się działania kadrowe.")
-    .addChannelOption((o) => o.setName("kanal").setDescription("Kanał logów").setRequired(true))
+    .addChannelOption((o) => o.setName("kanal").setDescription("Kanał logów").addChannelTypes(0, 5).setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
   new SlashCommandBuilder()
@@ -319,8 +319,30 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       const channel = interaction.options.getChannel("kanal");
+      if (!channel || !/^\d{17,20}$/.test(String(channel.id || "")) || ![0, 5].includes(channel.type) || !channel.isTextBased?.() || typeof channel.send !== "function") {
+        return interaction.reply({ content: "❌ Wybierz kanał tekstowy lub kanał ogłoszeniowy dla logów.", ephemeral: true });
+      }
+      const guildId = interaction.guildId || interaction.guild?.id;
+      if (!GUILD_ID || String(guildId || "") !== String(GUILD_ID) || String(channel.guildId || channel.guild?.id || "") !== String(GUILD_ID)) {
+        return interaction.reply({ content: "❌ Kanał logów musi należeć do tego serwera i skonfigurowanego serwera bota (GUILD_ID).", ephemeral: true });
+      }
+      const required = [
+        [PermissionFlagsBits.ViewChannel, "Wyświetlanie kanału"],
+        [PermissionFlagsBits.SendMessages, "Wysyłanie wiadomości"],
+        [PermissionFlagsBits.EmbedLinks, "Osadzanie linków"],
+      ];
+      let missing = required.map(([, label]) => label);
+      try {
+        const permissions = client.user && channel.permissionsFor?.(client.user);
+        if (permissions && typeof permissions.has === "function") missing = required.filter(([permission]) => !permissions.has(permission)).map(([, label]) => label);
+      } catch { /* Missing permission information does not establish access. */ }
+      if (missing.length) {
+        return interaction.reply({ content: `❌ Bot nie ma wymaganych uprawnień na tym kanale: **${missing.join(", ")}**. Nadaj je botowi i ponów \`/sw-ustaw-logi\`.`, ephemeral: true });
+      }
+      const previousChannelId = db.settings.logChannelId;
       db.settings.logChannelId = channel.id;
-      saveData();
+      try { saveData(); }
+      catch (error) { db.settings.logChannelId = previousChannelId; throw error; }
       return interaction.reply(`✅ Kanał logów ustawiony na ${channel}.`);
     }
 
