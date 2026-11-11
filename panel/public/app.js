@@ -1,3 +1,4 @@
+const PRISONER_PARAGRAPHS_RP = [{"numer":1,"opis":"Próba kradzieży","minuty":10},{"numer":2,"opis":"Kradzież mienia","minuty":15},{"numer":3,"opis":"Kradzież pojazdu","minuty":20},{"numer":4,"opis":"Włamanie do budynku lub pojazdu","minuty":20},{"numer":5,"opis":"Rozbój","minuty":30},{"numer":6,"opis":"Napad z użyciem broni","minuty":45},{"numer":7,"opis":"Oszustwo majątkowe","minuty":15},{"numer":8,"opis":"Wymuszenie pieniędzy lub haraczu","minuty":25},{"numer":9,"opis":"Umyślne zniszczenie mienia","minuty":10},{"numer":10,"opis":"Groźby karalne","minuty":10},{"numer":11,"opis":"Pobicie","minuty":20},{"numer":12,"opis":"Spowodowanie ciężkich obrażeń","minuty":35},{"numer":13,"opis":"Usiłowanie zabójstwa","minuty":50},{"numer":14,"opis":"Zabójstwo","minuty":60},{"numer":15,"opis":"Uprowadzenie lub bezprawne przetrzymywanie osoby","minuty":40},{"numer":16,"opis":"Wzięcie zakładnika","minuty":45},{"numer":17,"opis":"Nielegalne posiadanie broni","minuty":20},{"numer":18,"opis":"Nielegalny handel bronią","minuty":40},{"numer":19,"opis":"Bezprawne użycie broni, bez spowodowania obrażeń","minuty":25},{"numer":20,"opis":"Nielegalne posiadanie materiałów wybuchowych","minuty":35},{"numer":21,"opis":"Spowodowanie wybuchu lub podpalenia zagrażającego ludziom","minuty":50},{"numer":22,"opis":"Posiadanie substancji zabronionych","minuty":10},{"numer":23,"opis":"Handel substancjami zabronionymi","minuty":30},{"numer":24,"opis":"Produkcja substancji zabronionych","minuty":40},{"numer":25,"opis":"Ucieczka przed patrolem po poleceniu zatrzymania","minuty":15},{"numer":26,"opis":"Czynna napaść na funkcjonariusza","minuty":30},{"numer":27,"opis":"Utrudnianie interwencji z użyciem przemocy","minuty":20},{"numer":28,"opis":"Próba przekupienia funkcjonariusza","minuty":20},{"numer":29,"opis":"Przyjęcie łapówki przez funkcjonariusza","minuty":30},{"numer":30,"opis":"Podszywanie się pod funkcjonariusza","minuty":20},{"numer":31,"opis":"Fałszowanie dokumentów lub posługiwanie się nimi","minuty":20},{"numer":32,"opis":"Niszczenie albo ukrywanie dowodów","minuty":15},{"numer":33,"opis":"Celowe składanie fałszywych zeznań","minuty":15},{"numer":34,"opis":"Udział w zorganizowanej grupie przestępczej","minuty":35},{"numer":35,"opis":"Kierowanie zorganizowaną grupą przestępczą","minuty":50},{"numer":36,"opis":"Ucieczka z konwoju lub zakładu karnego","minuty":30},{"numer":37,"opis":"Próba ucieczki z konwoju lub zakładu karnego","minuty":15},{"numer":38,"opis":"Pomoc w ucieczce osadzonego","minuty":25},{"numer":39,"opis":"Przemyt broni lub substancji zabronionych do więzienia","minuty":25},{"numer":40,"opis":"Zorganizowanie buntu z użyciem przemocy","minuty":35},{"numer":41,"opis":"Udział w buncie z użyciem przemocy","minuty":20},{"numer":42,"opis":"Wtargnięcie na zabezpieczony teren zakładu karnego","minuty":15},{"numer":43,"opis":"Umyślne uszkodzenie zabezpieczeń więzienia","minuty":20},{"numer":44,"opis":"Niepowrót z przepustki bez usprawiedliwienia","minuty":15},{"numer":45,"opis":"Celowe spowodowanie wypadku zagrażającego ludziom","minuty":30}];
 "use strict";
 
 (() => {
@@ -846,6 +847,17 @@
       if(field.type==="checkbox")input.checked=Boolean(value);
       else if(value!==undefined&&value!==null)input.value=String(value);
       if(field.type==="checkbox"){label.prepend(input);wrapper.append(label);}else wrapper.append(label,input);
+      if(name==="prisoners" && field.key==="paragraf"){
+        const list=el("datalist");list.id="prisoner-paragraphs-rp";
+        for(const paragraph of PRISONER_PARAGRAPHS_RP){
+          const option=el("option");
+          option.value="§"+paragraph.numer+" — "+paragraph.opis;
+          option.label=paragraph.minuty+" min (RP)";
+          list.append(option);
+        }
+        input.setAttribute("list",list.id);
+        wrapper.append(list,el("small","","Taryfikator RP: wybierz czyn lub wpisz kilka paragrafów ręcznie. Wyrok i godziny ustaw osobno."));
+      }
       if(field.help)wrapper.append(el("small","",field.help));
       fields.append(wrapper);
     }
