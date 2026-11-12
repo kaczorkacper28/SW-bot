@@ -68,9 +68,9 @@ const PRISONER_PARAGRAPHS_RP = [{"numer":1,"opis":"Próba kradzieży","minuty":1
       {key:"imie",label:"Imię i nazwisko",required:true,max:100,full:true},
       {key:"paragraf",label:"Paragraf / przyczyna osadzenia",required:true,max:500,full:true},
       {key:"wyrok",label:"Wymiar kary",required:true,max:100,help:"Np. 2 miesiące lub opis wyroku."},
-      {key:"cela",label:"Numer celi",required:true,max:50},
       {key:"poczatek",label:"Początek kary",type:"time",required:true,help:"Czas serwera, format HH:MM."},
       {key:"koniec",label:"Koniec kary",type:"time",required:true,help:"Wcześniejsza godzina oznacza kolejny dzień."},
+      {key:"cela",label:"Numer celi",required:true,max:50},
       {key:"uwagi",label:"Uwagi",type:"textarea",max:1000,full:true},
       {key:"przepustka",label:"Przepustka udzielona",type:"checkbox",default:false,full:true,adminOnly:true,help:"Ręczne oznaczenie administratora. Wnioski i decyzje są dostępne w zakładce Przepustki."},
       {key:"paused",label:"Wstrzymaj odliczanie kary",type:"checkbox",editOnly:true,full:true},
@@ -811,6 +811,7 @@ const PRISONER_PARAGRAPHS_RP = [{"numer":1,"opis":"Próba kradzieży","minuty":1
     if (!canWrite()) {toast("Twoje konto ma dostęp tylko do podglądu.",true);return;}
     const resource=resources[name];if(!resource || resource.readonly)return;
     $("#record-dialog").classList.toggle("report-dialog",name==="reports");
+    $("#record-dialog").classList.toggle("prisoner-dialog",name==="prisoners");
     activeForm={name,record};
     $("#dialog-title").textContent=name==="passes"?"Złóż wniosek o przepustkę":name==="reports"?(record?"Edytuj raport służbowy":"Złóż raport służbowy"):(record?"Edytuj ":"Dodaj ")+resource.singular;
     $("#record-error").textContent="";$("#record-submit").disabled=false;$("#record-submit").textContent=name==="passes"?"Złóż wniosek":name==="reports"?(record?"Zapisz raport":"Złóż raport"):"Zapisz wpis";
