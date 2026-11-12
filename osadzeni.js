@@ -2507,7 +2507,7 @@ const commands = [
     new SlashCommandBuilder().setName("przepustki").setDescription("Pokazuje oczekujące przepustki")
 ].map(c => c.toJSON());
 
-client.once("ready", () => {
+client.once("clientReady", () => {
     // Automatyczne odświeżanie kart osadzonych co 15 sekund.
     refreshTimer = setInterval(async () => {
         let changed = false;
