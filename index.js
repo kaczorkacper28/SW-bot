@@ -8,6 +8,7 @@ const {
   Routes,
   SlashCommandBuilder,
   PermissionFlagsBits,
+  MessageFlags,
   EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
@@ -292,7 +293,7 @@ async function registerCommands() {
   console.log("✅ Komendy slash zostały zarejestrowane.");
 }
 
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`✅ Zalogowano jako ${client.user.tag}`);
   console.log(`🏛️ Serwer ID: ${GUILD_ID}`);
   try {
@@ -311,20 +312,20 @@ client.on("interactionCreate", async (interaction) => {
   try {
     const staffCommands = ["sw-dodaj", "sw-awans", "sw-degradacja", "sw-wydalenie", "sw-nagana", "sw-plus", "sw-minus", "sw-usun", "sw-ustaw-logi"];
     if (staffCommands.includes(name) && !hasStaffPermission(interaction)) {
-      return interaction.reply({ content: "❌ Brak uprawnień. Potrzebujesz uprawnienia Zarządzanie serwerem.", ephemeral: true });
+      return interaction.reply({ content: "❌ Brak uprawnień. Potrzebujesz uprawnienia Zarządzanie serwerem.", flags: MessageFlags.Ephemeral });
     }
     if (name === "sw-ustaw-logi") {
       if (!hasStaffPermission(interaction)) {
-        return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", ephemeral: true });
+        return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", flags: MessageFlags.Ephemeral });
       }
 
       const channel = interaction.options.getChannel("kanal");
       if (!channel || !/^\d{17,20}$/.test(String(channel.id || "")) || ![0, 5].includes(channel.type) || !channel.isTextBased?.() || typeof channel.send !== "function") {
-        return interaction.reply({ content: "❌ Wybierz kanał tekstowy lub kanał ogłoszeniowy dla logów.", ephemeral: true });
+        return interaction.reply({ content: "❌ Wybierz kanał tekstowy lub kanał ogłoszeniowy dla logów.", flags: MessageFlags.Ephemeral });
       }
       const guildId = interaction.guildId || interaction.guild?.id;
       if (!GUILD_ID || String(guildId || "") !== String(GUILD_ID) || String(channel.guildId || channel.guild?.id || "") !== String(GUILD_ID)) {
-        return interaction.reply({ content: "❌ Kanał logów musi należeć do tego serwera i skonfigurowanego serwera bota (GUILD_ID).", ephemeral: true });
+        return interaction.reply({ content: "❌ Kanał logów musi należeć do tego serwera i skonfigurowanego serwera bota (GUILD_ID).", flags: MessageFlags.Ephemeral });
       }
       const required = [
         [PermissionFlagsBits.ViewChannel, "Wyświetlanie kanału"],
@@ -337,7 +338,7 @@ client.on("interactionCreate", async (interaction) => {
         if (permissions && typeof permissions.has === "function") missing = required.filter(([permission]) => !permissions.has(permission)).map(([, label]) => label);
       } catch { /* Missing permission information does not establish access. */ }
       if (missing.length) {
-        return interaction.reply({ content: `❌ Bot nie ma wymaganych uprawnień na tym kanale: **${missing.join(", ")}**. Nadaj je botowi i ponów \`/sw-ustaw-logi\`.`, ephemeral: true });
+        return interaction.reply({ content: `❌ Bot nie ma wymaganych uprawnień na tym kanale: **${missing.join(", ")}**. Nadaj je botowi i ponów \`/sw-ustaw-logi\`.`, flags: MessageFlags.Ephemeral });
       }
       const previousChannelId = db.settings.logChannelId;
       db.settings.logChannelId = channel.id;
@@ -353,15 +354,15 @@ client.on("interactionCreate", async (interaction) => {
       const corps = getCorps(rank);
 
       if (!number) {
-        return interaction.reply({ content: "❌ Musisz podać numer SW.", ephemeral: true });
+        return interaction.reply({ content: "❌ Musisz podać numer SW.", flags: MessageFlags.Ephemeral });
       }
 
       if (db.members[user.id]) {
-        return interaction.reply({ content: `❌ ${user} jest już w ewidencji jako **SW-${formatNumber(db.members[user.id].number)}**.`, ephemeral: true });
+        return interaction.reply({ content: `❌ ${user} jest już w ewidencji jako **SW-${formatNumber(db.members[user.id].number)}**.`, flags: MessageFlags.Ephemeral });
       }
 
       if (isNumberTaken(number)) {
-        return interaction.reply({ content: `❌ Numer **SW-${formatNumber(number)}** jest już zajęty.`, ephemeral: true });
+        return interaction.reply({ content: `❌ Numer **SW-${formatNumber(number)}** jest już zajęty.`, flags: MessageFlags.Ephemeral });
       }
 
       const formattedNumber = formatNumber(number);
@@ -391,7 +392,7 @@ client.on("interactionCreate", async (interaction) => {
     const commandsWithMember = ["sw-awans", "sw-degradacja", "sw-wydalenie", "sw-nagana", "sw-plus", "sw-minus", "sw-info", "sw-usun"];
 
     if (commandsWithMember.includes(name) && (!user || !db.members[user.id])) {
-      return interaction.reply({ content: "❌ Ta osoba nie znajduje się w ewidencji. Użyj `/sw-dodaj`.", ephemeral: true });
+      return interaction.reply({ content: "❌ Ta osoba nie znajduje się w ewidencji. Użyj `/sw-dodaj`.", flags: MessageFlags.Ephemeral });
     }
 
     if (name === "sw-awans") {
@@ -400,7 +401,7 @@ client.on("interactionCreate", async (interaction) => {
       const newRank = getNextRank(oldRank);
 
       if (!newRank) {
-        return interaction.reply({ content: "❌ Funkcjonariusz ma już najwyższą rangę.", ephemeral: true });
+        return interaction.reply({ content: "❌ Funkcjonariusz ma już najwyższą rangę.", flags: MessageFlags.Ephemeral });
       }
 
       data.rank = newRank;
@@ -423,7 +424,7 @@ client.on("interactionCreate", async (interaction) => {
       const newRank = getPreviousRank(oldRank);
 
       if (!newRank) {
-        return interaction.reply({ content: "❌ Funkcjonariusz ma już najniższą rangę.", ephemeral: true });
+        return interaction.reply({ content: "❌ Funkcjonariusz ma już najniższą rangę.", flags: MessageFlags.Ephemeral });
       }
 
       data.rank = newRank;
@@ -523,7 +524,7 @@ client.on("interactionCreate", async (interaction) => {
 
     if (name === "sw-usun") {
       if (!hasStaffPermission(interaction)) {
-        return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", ephemeral: true });
+        return interaction.reply({ content: "❌ Potrzebujesz uprawnienia **Zarządzanie serwerem**.", flags: MessageFlags.Ephemeral });
       }
 
       const data = db.members[user.id];
@@ -534,9 +535,9 @@ client.on("interactionCreate", async (interaction) => {
   } catch (error) {
     console.error(error);
     if (interaction.replied || interaction.deferred) {
-      return interaction.followUp({ content: "❌ Wystąpił błąd podczas wykonywania polecenia.", ephemeral: true });
+      return interaction.followUp({ content: "❌ Wystąpił błąd podczas wykonywania polecenia.", flags: MessageFlags.Ephemeral });
     }
-    return interaction.reply({ content: "❌ Wystąpił błąd podczas wykonywania polecenia.", ephemeral: true });
+    return interaction.reply({ content: "❌ Wystąpił błąd podczas wykonywania polecenia.", flags: MessageFlags.Ephemeral });
   }
 });
 
