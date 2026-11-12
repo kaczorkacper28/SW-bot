@@ -244,9 +244,9 @@ function createPassNotifications({ client, getRecord = () => undefined, saveRefe
   const ready = () => { drain().catch(error => console.error("Kolejka przepustek:", error.message)); };
   return { enqueue, retry, withRecordLock, has: id => db.events.some(event => event.id === id),
     list: () => db.events.slice(-100).reverse().map(outcome),
-    start() { if (active) return; active = true; client.on("ready", ready); client.on("shardResume", ready); if (client.isReady?.()) ready(); },
+    start() { if (active) return; active = true; client.on("clientReady", ready); client.on("shardResume", ready); if (client.isReady?.()) ready(); },
     async stop() {
-      active = false; client.removeListener("ready", ready); client.removeListener("shardResume", ready);
+      active = false; client.removeListener("clientReady", ready); client.removeListener("shardResume", ready);
       if (running) await running;
       if (locks.size) await Promise.allSettled([...locks.values()]);
     } };
