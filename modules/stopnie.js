@@ -257,7 +257,7 @@ function registerStopnieModule(client) {
     },
     remove(id) { const item = validate.present(findMember(id)); data.sections[item.section] = data.sections[item.section].filter(member => member.userId !== id); persistList(); return { ...item, id: item.userId }; }
   });
-  client.once('ready', () => { updateMessage(client).catch(console.error); });
+  client.once("clientReady", () => { updateMessage(client).catch(console.error); });
   const stopnieNames = new Set(commands.map(command => command.name));
 
 client.on("interactionCreate", async interaction => {
