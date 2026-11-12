@@ -183,8 +183,8 @@ function createResourceNotifications({ client, getFallbackChannelId = () => unde
   const ready = () => { drain().catch(error => console.error("Kolejka powiadomień Discord:", error.message)); };
   return { enqueue, retry, has: id => db.events.some(event => event.id === id),
     list: () => db.events.slice(-100).reverse().map(outcome),
-    start() { if (active) return; active = true; client.on("ready", ready); client.on("shardResume", ready); if (client.isReady?.()) ready(); },
-    async stop() { active = false; client.removeListener("ready", ready); client.removeListener("shardResume", ready); if (running) await running; } };
+    start() { if (active) return; active = true; client.on("clientReady", ready); client.on("shardResume", ready); if (client.isReady?.()) ready(); },
+    async stop() { active = false; client.removeListener("clientReady", ready); client.removeListener("shardResume", ready); if (running) await running; } };
 }
 
 module.exports = { createResourceNotifications };
