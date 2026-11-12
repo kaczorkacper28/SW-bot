@@ -2458,9 +2458,27 @@ function normalizeParagrafQuery(value) {
 function getParagrafSuggestions(value) {
     const query = normalizeParagrafQuery(value);
     const number = /^(?:§\s*)?(\d+)$/.exec(query);
-    return PARAGRAFY_RP.filter(p => number
-        ? p.numer === Number(number[1])
-        : normalizeParagrafQuery("§" + p.numer + " " + p.opis).includes(query)
+
+    if (number) {
+        const numer = Number(number[1]);
+        const znaleziony = PARAGRAFY_RP.find(p => p.numer === numer);
+        if (znaleziony) {
+            return [{
+                name: ("§" + znaleziony.numer + " — " + znaleziony.opis + " | " + znaleziony.minuty + " min (RP)").slice(0, 100),
+                value: "§" + znaleziony.numer + " — " + znaleziony.opis
+            }];
+        }
+        if (Number.isInteger(numer) && numer >= 1 && numer <= 1000) {
+            return [{
+                name: ("§" + numer + " — Własny paragraf RP (uzupełnij opis)").slice(0, 100),
+                value: "§" + numer + " — Własny paragraf RP"
+            }];
+        }
+        return [];
+    }
+
+    return PARAGRAFY_RP.filter(p =>
+        normalizeParagrafQuery("§" + p.numer + " " + p.opis).includes(query)
     ).slice(0, 25).map(p => ({
         name: ("§" + p.numer + " — " + p.opis + " | " + p.minuty + " min (RP)").slice(0, 100),
         value: "§" + p.numer + " — " + p.opis
