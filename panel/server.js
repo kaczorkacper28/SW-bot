@@ -214,8 +214,8 @@ function createPanelServer(options = {}) {
 if (require.main === module) {
   require("dotenv").config({ quiet:true });
   const server = createPanelServer();
-  const port = Number(process.env.PANEL_PORT || 3200);
-  const host = process.env.PANEL_HOST || "127.0.0.1";
+  const port = Number(process.env.PORT || process.env.PANEL_PORT || 3200);
+  const host = process.env.PANEL_HOST || "0.0.0.0";
   server.on("error", error => { console.error(`Nie można uruchomić panelu: ${error.message}`); process.exitCode = 1; });
   server.listen(port, host, () => console.log(`Panel SW nasłuchuje na ${host}:${server.address().port}.`));
   const stop = () => server.close(() => process.exit(0));
