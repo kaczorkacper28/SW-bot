@@ -1,6 +1,7 @@
 "use strict";
 
 const http = require("node:http");
+const https = require("node:https");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
@@ -62,6 +63,11 @@ function createPanelServer(options = {}) {
   const bridgeDir = options.bridgeDir || process.env.MANAGEMENT_DATA_DIR || process.env.SW_DATA_DIR || path.join(__dirname, "..", "data");
   const publicDir = options.publicDir || path.join(__dirname, "public");
   const bridgePort = options.bridgePort ?? Number(process.env.MANAGEMENT_PORT || 3210);
+  const bridgeUrlValue = options.bridgeUrl || process.env.MANAGEMENT_BRIDGE_URL || null;
+  const bridgeUrl = bridgeUrlValue ? new URL(bridgeUrlValue) : null;
+  if (bridgeUrl && (bridgeUrl.protocol !== "https:" || bridgeUrl.username || bridgeUrl.password || bridgeUrl.search || bridgeUrl.hash)) {
+    throw new Error("MANAGEMENT_BRIDGE_URL musi być bezpiecznym adresem HTTPS bez danych logowania, parametrów i fragmentu.");
+  }
   const publicOrigin = options.publicOrigin || process.env.PANEL_PUBLIC_ORIGIN || null;
   if (publicOrigin && new URL(publicOrigin).origin !== publicOrigin) throw new Error("PANEL_PUBLIC_ORIGIN musi zawierać sam origin, bez ścieżki.");
   if (publicOrigin) {
@@ -164,7 +170,7 @@ function createPanelServer(options = {}) {
         const allowed = (request.method === "GET" && ["/api/state","/api/notifications"].includes(url.pathname)) || (["POST", "PATCH", "DELETE"].includes(request.method) && mutation.test(url.pathname)) || (request.method === "POST" && url.pathname === "/api/actions/publish") || retryNotification || passDecision;
         if (!allowed) return send(response, 404, { error: "Nieznane API." });
         let key;
-        try { key = fs.readFileSync(path.join(bridgeDir, "panel-bridge.key"), "utf8").trim(); }
+        try { key = process.env.MANAGEMENT_BRIDGE_KEY || fs.readFileSync(path.join(bridgeDir, "panel-bridge.key"), "utf8").trim(); }
         catch (error) { if (error.code === "ENOENT") return send(response, 503, { error: "Bot jest wyłączony. Uruchom npm start lub npm run start:offline." }); throw error; }
         const body = isMutation ? await readBody(request) : undefined;
         if (session.role !== "admin" && ["POST", "PATCH"].includes(request.method) && /^\/api\/prisoners(?:\/[^/]+)?$/.test(url.pathname)) {
@@ -175,11 +181,16 @@ function createPanelServer(options = {}) {
             return send(response, 403, { error: "Zmiana udzielonej przepustki wymaga administratora. Złóż wniosek w zakładce Przepustki." });
           }
         }
-        const upstream = http.request({
-          hostname: "127.0.0.1", port: bridgePort, method: request.method, path: url.pathname,
+        if (!/^[a-f0-9]{64}$/.test(key)) return send(response, 503, { error: "Nieprawidłowy klucz połączenia z botem." });
+        const bridgeRequestOptions = {
+          ...(bridgeUrl
+            ? { protocol: bridgeUrl.protocol, hostname: bridgeUrl.hostname, port: bridgeUrl.port || 443, path: `${bridgeUrl.pathname.replace(/\/$/, "")}${url.pathname}${url.search}` }
+            : { hostname: "127.0.0.1", port: bridgePort, path: url.pathname + url.search }),
+          method: request.method,
           headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", "X-Panel-User": session.username, "X-Panel-Role": session.role, ...(body ? { "Content-Length": body.length } : {}) },
           timeout: 10000,
-        }, bridge => {
+        };
+        const upstream = (bridgeUrl ? https : http).request(bridgeRequestOptions, bridge => {
           response.writeHead(bridge.statusCode, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
           bridge.pipe(response);
         });
